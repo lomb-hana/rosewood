@@ -274,17 +274,31 @@ func run_shot() -> void:
 	await snap(shot + "-creator.png")
 	confirm()
 	await get_tree().create_timer(0.3).timeout
-	village.cell = Vector2i(24, 24); village.player.position = Vector2(24 * 16, 24 * 16)
-	village.player.facing = Vector2i(0, 1)
+	village.load_map("village", Vector2i(28, 18)); village.cam.zoom = Vector2(1, 1)
+	await get_tree().create_timer(1.0).timeout
+	await snap(shot + "-town.png")
+	village.cam.zoom = Vector2(2, 2)
+	village.load_map("village", Vector2i(28, 30)); village.player.facing = Vector2i(0, 1)
 	await get_tree().create_timer(1.0).timeout
 	await snap(shot + "-village.png")
 	village.interact()
 	await get_tree().create_timer(0.2).timeout
 	await snap(shot + "-talk.png")
+	village.interact(); village.interact(); village.interact()
+	# walk into the inn door via real movement
+	village.load_map("village", Vector2i(46, 11)); village.player.facing = Vector2i(0, -1)
+	Input.action_press("ui_up")
+	var ev := InputEventKey.new(); ev.keycode = KEY_UP; ev.physical_keycode = KEY_UP; ev.pressed = true; Input.parse_input_event(ev)
+	await get_tree().create_timer(1.2).timeout
+	ev = InputEventKey.new(); ev.keycode = KEY_UP; ev.physical_keycode = KEY_UP; ev.pressed = false; Input.parse_input_event(ev)
+	await get_tree().create_timer(0.8).timeout
+	print("MAP after walking=", village.map_id, " cell=", village.cell)
+	await snap(shot + "-interior.png")
+	write_slot(slot, village.snapshot())
 	show_load()
 	await get_tree().create_timer(0.3).timeout
 	await snap(shot + "-load2.png")
 	load_game(1)
 	await get_tree().create_timer(0.5).timeout
-	print("LOADED name=", village.data.name, " cls=", village.data.cls)
+	print("LOADED name=", village.data.name, " map=", village.map_id, " cell=", village.cell)
 	get_tree().quit()
