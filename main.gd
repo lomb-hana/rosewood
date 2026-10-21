@@ -331,8 +331,8 @@ func run_shot() -> void:
 		village.cam.limit_left = -10000; village.cam.limit_right = 10000; village.cam.limit_top = -10000; village.cam.limit_bottom = 10000
 		village.player.position = Vector2(village.mw * 8, village.mh * 8)
 		await get_tree().create_timer(0.4).timeout
-		await snap(shot + "-map-" + m + ".png")
-		print("REACH ", m, " ", village.check_reach(), " bld=", village.buildings.size(), "/", D.WORLD[m].get("buildings", []).size())
+		await snap(shot + "-map-" + m.replace("/", "_") + ".png")
+		print("REACH ", m, " ", village.check_reach(), " bld=", village.buildings.size(), "/", D.WORLD.get(m, {}).get("buildings", []).size())
 		village.cam.zoom = Vector2(2, 2); village.cam.position_smoothing_enabled = true
 	# walk from Rosewood east edge into the next map for real
 	village.load_map("rosewood", {"cell": Vector2i(57, 19)}); village.player.facing = Vector2i(1, 0)

@@ -633,6 +633,7 @@ func build_interior(id: String) -> void:
 	new_grid(w, h, FLOOR)
 	rect(0, 0, w, 2, IWALL); rect(0, 0, 1, h, IWALL); rect(w - 1, 0, 1, h, IWALL); rect(0, h - 1, w, 1, IWALL)
 	setc(w / 2, h - 1, EXIT)
+	hub = Vector2i(w / 2, h - 2)
 	for f in it[3]:
 		var r := Rect2i(f[0] + 1, f[1] + 2, f[2], f[3])
 		furn.append([r, Color(f[4]), f[5]])
