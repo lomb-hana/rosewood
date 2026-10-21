@@ -6,6 +6,9 @@ var settings := ConfigFile.new()
 var slot := 1
 const CharScript := preload("res://character.gd")
 const VillageScript := preload("res://village.gd")
+const BattleScript := preload("res://battle.gd")
+const D := preload("res://data.gd")
+var battle: CanvasLayer
 const CLASSES := [
 	["Knight", "Tank, front row. Guard allies, Shield Bash."],
 	["Rogue", "Speed, crits, steal. Backstab from the back row."],
@@ -36,8 +39,24 @@ func _ready() -> void:
 		if AudioServer.get_bus_index(bus) == -1:
 			AudioServer.add_bus(); AudioServer.set_bus_name(AudioServer.bus_count - 1, bus)
 	apply_settings()
+	VillageScript.allowed = ["rosewood", "hearth_fields", "thornwild_edge"]
 	show_title()
 	if shot != "": run_shot()
+	elif OS.has_feature("web"):
+		var q = JavaScriptBridge.eval("window.location.search", true)
+		if q is String and "warp=" in q: web_warp(q.split("warp=")[1].split("&")[0], "battle" in q)
+
+## Dev/test hook: ?warp=<map id>[&battle] starts a test character there (does not touch saves).
+func web_warp(m: String, fight: bool) -> void:
+	await get_tree().create_timer(0.5).timeout
+	var d := {"name": "Tester", "cls": "Knight", "skin": SKINS[1], "hair": HAIRS[1], "outfit": OUTFITS[0], "map": m}
+	D.ensure(d)
+	slot = 99
+	start_village(d)
+	village.save_requested.disconnect(village.save_requested.get_connections()[0].callable)
+	if fight:
+		await get_tree().create_timer(1.0).timeout
+		village.encounter.emit([["wolf", 2], ["thornling", 2]], "forest")
 
 func apply_settings() -> void:
 	for bus in ["Music", "SFX"]:
@@ -65,6 +84,7 @@ func write_slot(i: int, d: Dictionary) -> void:
 	if f: f.store_string(JSON.stringify(d)); f.close()
 
 func clear() -> void:
+	if battle: battle.queue_free(); battle = null
 	if ui: ui.queue_free(); ui = null
 	if village: village.queue_free(); village = null
 
@@ -152,7 +172,7 @@ func show_load() -> void:
 	for i in range(1, SLOTS + 1):
 		var d = read_slot(i)
 		if d == null: continue
-		var b := btn("Slot %d   %s · %s   %s" % [i, d.name, d.cls, d.get("saved", "")], func(): load_game(i))
+		var b := btn("Slot %d   %s · %s Lv %d   %s" % [i, d.name, d.cls, int(d.get("lv", 1)), d.get("saved", "")], func(): load_game(i))
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT; b.custom_minimum_size = Vector2(420, 28)
 		root.add_child(b)
 		if first == null: first = b
@@ -179,7 +199,7 @@ func show_options() -> void:
 	root.add_child(fs)
 	root.add_child(_lbl("Controls"))
 	var c := Label.new()
-	c.text = "Move: Arrow keys / WASD\nTalk / confirm: E / Enter / Space\nSave game (in village): F5\nBack / title: Esc\nMenus: mouse, or arrows + Enter"
+	c.text = "World map / status: M or Tab\nMove: Arrow keys / WASD\nTalk / confirm: E / Enter / Space\nSave game (in village): F5\nBack / title: Esc\nMenus: mouse, or arrows + Enter"
 	c.add_theme_color_override("font_color", Color("c0b0b4")); root.add_child(c)
 	root.add_child(btn("Back", show_menu))
 	first.grab_focus.call_deferred()
@@ -243,6 +263,8 @@ func confirm() -> void:
 	slot = SLOTS
 	for i in range(1, SLOTS + 1):
 		if read_slot(i) == null: slot = i; break
+	d["map"] = "rosewood"
+	D.ensure(d)
 	write_slot(slot, d)
 	start_village(d)
 
@@ -252,10 +274,43 @@ func load_game(i: int) -> void:
 
 func start_village(d: Dictionary) -> void:
 	clear(); screen = "village"
+	D.ensure(d)
 	village = VillageScript.new(); village.setup(d)
+	village.encounter.connect(start_battle)
 	village.quit_to_title.connect(show_menu.call_deferred)
 	village.save_requested.connect(func(dd): write_slot(slot, dd))
 	add_child(village)
+
+func start_battle(foes: Array, biome: String) -> void:
+	if battle: return
+	village.process_mode = Node.PROCESS_MODE_DISABLED
+	# transition: three white flashes, then a black wipe
+	var fx := CanvasLayer.new(); fx.layer = 10; add_child(fx)
+	var r := ColorRect.new(); r.set_anchors_preset(Control.PRESET_FULL_RECT); r.color = Color(1, 1, 1, 0); fx.add_child(r)
+	var tw := create_tween()
+	for i in 3:
+		tw.tween_property(r, "color:a", 0.85, 0.06); tw.tween_property(r, "color:a", 0.0, 0.06)
+	tw.tween_callback(func(): r.color = Color(0, 0, 0, 1); r.scale = Vector2(0, 1))
+	tw.tween_property(r, "scale:x", 1.0, 0.25)
+	await tw.finished
+	battle = BattleScript.new(); battle.setup(village.data, foes, biome)
+	battle.done.connect(end_battle)
+	add_child(battle)
+	var tw2 := create_tween(); tw2.tween_property(r, "color:a", 0.0, 0.3); tw2.tween_callback(fx.queue_free)
+
+func end_battle(result: String) -> void:
+	var was_boss := false
+	for e in battle.enemies: if e.boss: was_boss = true
+	battle.queue_free(); battle = null
+	match result:
+		"win", "flee":
+			village.process_mode = Node.PROCESS_MODE_INHERIT
+			if result == "win" and was_boss: village.boss_defeated()
+		"lose_load":
+			if read_slot(slot) != null: load_game(slot)
+			else: show_title()
+		_:
+			show_menu()
 
 func snap(path: String) -> void:
 	await RenderingServer.frame_post_draw
@@ -264,57 +319,59 @@ func snap(path: String) -> void:
 func run_shot() -> void:
 	await get_tree().create_timer(0.5).timeout
 	await snap(shot + "-title.png")
-	for scr in ["menu", "options", "load"]:
-		call("show_" + scr)
-		await get_tree().create_timer(0.3).timeout
-		await snap(shot + "-" + scr + ".png")
 	sel.hair = 2; sel.outfit = 2; sel.cls = 3
 	show_creator(); name_edit.text = "Daniel"
 	await get_tree().create_timer(0.3).timeout
-	await snap(shot + "-creator.png")
 	confirm()
-	await get_tree().create_timer(0.3).timeout
-	village.load_map("village", Vector2i(30, 20)); village.cam.zoom = Vector2(0.55, 0.55)
-	village.cam.limit_left = -10000; village.cam.limit_right = 10000; village.cam.limit_top = -10000; village.cam.limit_bottom = 10000
-	village.cam.position_smoothing_enabled = false
-	await get_tree().create_timer(1.0).timeout
-	await snap(shot + "-town.png")
-	village.cam.position_smoothing_enabled = true
-	village.cam.zoom = Vector2(2, 2)
-	# walk up the cliff stairs for real: start below stairs at (10,16), hold up
-	village.load_map("village", Vector2i(10, 16)); village.player.facing = Vector2i(0, -1)
-	var up := InputEventKey.new(); up.keycode = KEY_UP; up.physical_keycode = KEY_UP; up.pressed = true; Input.parse_input_event(up)
-	await get_tree().create_timer(1.0).timeout
-	up = InputEventKey.new(); up.keycode = KEY_UP; up.physical_keycode = KEY_UP; up.pressed = false; Input.parse_input_event(up)
-	await get_tree().create_timer(0.8).timeout
-	print("CLIFF cell=", village.cell)
-	village.cam.zoom = Vector2(1.2, 1.2)
-	await get_tree().create_timer(0.8).timeout
-	await snap(shot + "-cliff.png")
-	village.cam.zoom = Vector2(2, 2)
-	# old-save safety: wall position
-	village.load_map("village", Vector2i(22, 11)); print("SAFE from wall -> ", village.cell)
-	village.load_map("village", Vector2i(29, 34)); village.player.facing = Vector2i(0, 1)
-	await get_tree().create_timer(1.0).timeout
-	await snap(shot + "-village.png")
-	village.interact()
-	await get_tree().create_timer(0.2).timeout
-	await snap(shot + "-talk.png")
-	village.interact(); village.interact(); village.interact()
-	# walk into the inn door via real movement
-	village.load_map("village", Vector2i(25, 30)); village.player.facing = Vector2i(0, -1)
-	Input.action_press("ui_up")
-	var ev := InputEventKey.new(); ev.keycode = KEY_UP; ev.physical_keycode = KEY_UP; ev.pressed = true; Input.parse_input_event(ev)
-	await get_tree().create_timer(1.2).timeout
-	ev = InputEventKey.new(); ev.keycode = KEY_UP; ev.physical_keycode = KEY_UP; ev.pressed = false; Input.parse_input_event(ev)
-	await get_tree().create_timer(0.8).timeout
-	print("MAP after walking=", village.map_id, " cell=", village.cell)
-	await snap(shot + "-interior.png")
-	write_slot(slot, village.snapshot())
-	show_load()
-	await get_tree().create_timer(0.3).timeout
-	await snap(shot + "-load2.png")
-	load_game(1)
 	await get_tree().create_timer(0.5).timeout
-	print("LOADED name=", village.data.name, " map=", village.map_id, " cell=", village.cell)
+	var only := OS.get_environment("SHOTMAPS")
+	var maps: Array = only.split(",") if only != "" else []
+	for m in maps:
+		village.load_map(m, {})
+		village.cam.zoom = Vector2(0.5, 0.5); village.cam.position_smoothing_enabled = false
+		village.cam.limit_left = -10000; village.cam.limit_right = 10000; village.cam.limit_top = -10000; village.cam.limit_bottom = 10000
+		village.player.position = Vector2(village.mw * 8, village.mh * 8)
+		await get_tree().create_timer(0.4).timeout
+		await snap(shot + "-map-" + m + ".png")
+		village.cam.zoom = Vector2(2, 2); village.cam.position_smoothing_enabled = true
+	# walk from Rosewood east edge into the next map for real
+	village.load_map("rosewood", {"cell": Vector2i(57, 19)}); village.player.facing = Vector2i(1, 0)
+	var ev := InputEventKey.new(); ev.keycode = KEY_RIGHT; ev.physical_keycode = KEY_RIGHT; ev.pressed = true; Input.parse_input_event(ev)
+	await get_tree().create_timer(0.7).timeout
+	ev = InputEventKey.new(); ev.keycode = KEY_RIGHT; ev.physical_keycode = KEY_RIGHT; ev.pressed = false; Input.parse_input_event(ev)
+	await get_tree().create_timer(0.6).timeout
+	print("AFTER EDGE map=", village.map_id, " cell=", village.cell)
+	await snap(shot + "-region.png")
+	# forced battle
+	village.encounter.emit([["wolf", 2], ["thornling", 2], ["hollow", 3]], "forest")
+	await get_tree().create_timer(1.2).timeout
+	while battle.cmd_box.get_child_count() == 0: await get_tree().create_timer(0.1).timeout
+	await get_tree().create_timer(0.2).timeout
+	await snap(shot + "-battle.png")
+	battle.chosen.emit(["attack", battle.enemies[0]])
+	await get_tree().create_timer(0.3).timeout
+	await snap(shot + "-battle-hit.png")
+	# kill everything for the victory screen
+	for e in battle.enemies: e.hp = 1
+	var t0 := Time.get_ticks_msec()
+	while battle and Time.get_ticks_msec() - t0 < 25000:
+		if battle.cmd_box.get_child_count() > 0 and battle.cmd_box.get_child(0) is Button and battle.cmd_box.get_child(0).text == "Attack":
+			var tgt = battle.enemies.filter(func(e): return e.hp > 0)
+			if tgt.size() > 0: battle.chosen.emit(["attack", tgt[0]])
+		if battle.root.has_node("ResultPanel"):
+			await get_tree().create_timer(0.3).timeout
+			await snap(shot + "-victory.png")
+			battle.finish("win")
+			break
+		await get_tree().create_timer(0.2).timeout
+	await get_tree().create_timer(0.5).timeout
+	print("AFTER BATTLE lv=", village.data.lv, " xp=", village.data.xp, " gold=", village.data.gold, " hp=", village.data.hp)
+	village.wmap.visible = true; village.wmap.queue_redraw()
+	await get_tree().create_timer(0.3).timeout
+	await snap(shot + "-world.png")
+	village.wmap.visible = false
+	write_slot(slot, village.snapshot())
+	load_game(slot)
+	await get_tree().create_timer(0.5).timeout
+	print("LOADED map=", village.map_id, " cell=", village.cell, " lv=", village.data.lv)
 	get_tree().quit()

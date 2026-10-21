@@ -1,12 +1,22 @@
 extends Node2D
-## Rosewood village + building interiors. Placeholder art drawn in code.
+## World: Rosewood (handmade), generated region maps, building interiors, encounters.
 signal quit_to_title
 signal save_requested(d)
+signal encounter(foes, biome)
 const T := 16
-enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN, HIGH, CLIFF, STAIRS, BUSH, LAMP, BENCH, CRATE, BARREL, BRIDGE}
-const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL]
+enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN, HIGH, CLIFF, STAIRS, BUSH, LAMP, BENCH, CRATE, BARREL, BRIDGE,
+	SAND, ROCK, CAVEWALL, PINE, REED, PEBBLE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP}
+const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL, ROCK, CAVEWALL, PINE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP]
+const TILE_NAMES := {"TREE": TREE, "ROCK": ROCK, "CAVEWALL": CAVEWALL, "PINE": PINE, "RUIN": RUIN, "PILLAR": PILLAR, "FLOWER": FLOWER, "BUSH": BUSH, "REED": REED, "PEBBLE": PEBBLE}
 const SAFE_SPAWN := Vector2i(24, 18)
+const INWARD := {"N": Vector2i(0, 1), "S": Vector2i(0, -1), "W": Vector2i(1, 0), "E": Vector2i(-1, 0)}
+const OPP := {"N": "S", "S": "N", "E": "W", "W": "E"}
 const CharScript := preload("res://character.gd")
+const D := preload("res://data.gd")
+## Limit which maps exist (empty = whole world). Used for staged releases.
+static var allowed: Array = []
+const TYPE_LOOK := {"inn": ["3f7a4a", "d9b98a", 7, 5], "store": ["c27c2c", "e0cfa8", 6, 4], "chapel": ["6a4c8a", "e8e8ec", 5, 6], "hall": ["4a5f7a", "cdbf9f", 7, 5],
+	"smithy": ["4a4a52", "8f8a86", 5, 4], "home": ["8a5a34", "d8c39a", 5, 4], "mill": ["7a6a4a", "b8a27e", 5, 5]}
 
 # id: [name, x, y, w, h, roof, wall]   (door = bottom row, middle)
 const BUILDINGS := {
@@ -45,16 +55,26 @@ const INTERIORS := {
 		[[8,2,"Buttercup","f0f0f0","3a3a3a","f0f0f0","Buttercup the cow: Moo. (She seems worried about the crops too.)"]]],
 }
 
+
 var g := []
 var mw := 56
 var mh := 36
-var map_id := "village"
-var bcell := {}     # Vector2i -> building id (roof/wall/door)
-var furn := []      # [Rect2i, color, label]
+var map_id := "rosewood"
+var biome := "village"
+var ground := Color("5e9e4a")
+var buildings := {}  # id -> [name, x, y, w, h, roof, wall, (type)]
+var binfo := {}      # generated building id -> def array
+var bcell := {}
+var furn := []
+var exits := {}      # Vector2i -> [target map, side]
+var chests := {}     # Vector2i -> item
+var camps := {}
+var hub := Vector2i(10, 10)
+var boss_cell := Vector2i(-1, -1)
 var data := {}
 var player: Node2D
 var cam: Camera2D
-var cell := Vector2i(27, 20)
+var cell := SAFE_SPAWN
 var moving := false
 var npcs := {}
 var signs := {}
@@ -63,13 +83,18 @@ var dialog: PanelContainer
 var dialog_label: Label
 var loc: Label
 var fade: ColorRect
+var wmap: Control
 var talk_lines := []
 var talk_i := 0
+var talk_after: Callable
+var steps := 0
+var enc_rng := RandomNumberGenerator.new()
 
 func setup(d: Dictionary) -> void:
 	data = d
 
 func _ready() -> void:
+	enc_rng.randomize()
 	player = CharScript.new()
 	player.skin = Color(data.skin); player.hair = Color(data.hair); player.outfit = Color(data.outfit)
 	player.z_index = 1
@@ -78,24 +103,50 @@ func _ready() -> void:
 	cam.position_smoothing_enabled = true; cam.position_smoothing_speed = 8.0
 	player.add_child(cam)
 	build_ui()
-	var m: String = data.get("map", "village")
+	var m: String = str(data.get("map", "rosewood"))
+	if m == "village": m = "rosewood"
+	if INTERIORS.has(m): m = "rosewood/" + m
+	if not map_exists(m): m = "rosewood"
 	var c := SAFE_SPAWN
 	if data.has("cell"): c = Vector2i(int(data.cell[0]), int(data.cell[1]))
-	load_map(m if (m == "village" or INTERIORS.has(m)) else "village", c)
+	load_map(m, {"cell": c})
+
+func map_exists(id: String) -> bool:
+	var base := id.split("/")[0]
+	if not D.WORLD.has(base): return false
+	if allowed.size() > 0 and not base in allowed: return false
+	if "/" in id:
+		return true
+	return true
 
 # ---------------- maps ----------------
-func load_map(id: String, c: Vector2i) -> void:
+func load_map(id: String, spec: Dictionary) -> void:
 	map_id = id
 	for n in npcs.values(): n.node.queue_free()
-	npcs.clear(); signs.clear(); bcell.clear(); furn.clear()
-	if id == "village": build_village()
-	else: build_interior(id)
+	npcs.clear(); signs.clear(); bcell.clear(); furn.clear(); exits.clear(); chests.clear(); camps.clear(); buildings.clear(); binfo.clear()
+	boss_cell = Vector2i(-1, -1); steps = 0
+	if "/" in id:
+		build_interior(id)
+	elif id == "rosewood":
+		biome = "village"; ground = Color("5e9e4a"); build_rosewood()
+	else:
+		gen_map(id)
+	# drop exits to maps not in this release
+	for c in exits.keys():
+		if not map_exists(exits[c][0]): exits.erase(c)
+	var c := hub
+	if spec.has("cell"): c = spec.cell
+	elif spec.has("from"):
+		for e in exits:
+			if exits[e][0] == spec.from:
+				c = e + INWARD[exits[e][1]]; break
+	elif spec.has("door"):
+		c = door_of(spec.door) + Vector2i(0, 1)
 	cell = c
 	var bad := cell.x < 0 or cell.y < 0 or cell.x >= mw or cell.y >= mh
-	if not bad: bad = solid(cell) or g[cell.y][cell.x] in [DOOR, EXIT]
+	if not bad: bad = solid(cell) or g[cell.y][cell.x] in [DOOR, EXIT] or exits.has(cell)
 	if bad:
-		if id == "village": cell = SAFE_SPAWN
-		else: cell = Vector2i(mw / 2, mh - 2)
+		cell = SAFE_SPAWN if id == "rosewood" else (Vector2i(mw / 2, mh - 2) if "/" in id else hub)
 	player.position = Vector2(cell * T)
 	var wpx := mw * T; var hpx := mh * T
 	cam.limit_left = 0 if wpx >= 320 else (wpx - 320) / 2
@@ -103,15 +154,25 @@ func load_map(id: String, c: Vector2i) -> void:
 	cam.limit_top = 0 if hpx >= 180 else (hpx - 180) / 2
 	cam.limit_bottom = hpx if hpx >= 180 else cam.limit_top + 180
 	cam.reset_smoothing()
-	loc.text = "Rosewood Village" if id == "village" else BUILDINGS[id][0]
+	if "/" in id:
+		loc.text = buildings_name(id)
+	else:
+		loc.text = D.WORLD[id].name
 	queue_redraw()
 
-func add_npc(c: Vector2i, n: String, sk: String, hr: String, of: String, lines: Array) -> void:
+func buildings_name(id: String) -> String:
+	var parts := id.split("/")
+	if parts[0] == "rosewood": return BUILDINGS[parts[1]][0]
+	for b in D.WORLD[parts[0]].get("buildings", []):
+		if b[0] == parts[1]: return b[1]
+	return "Inside"
+
+func add_npc(c: Vector2i, n: String, sk: String, hr: String, of: String, lines: Array, action := "") -> void:
 	var node = CharScript.new()
 	node.skin = Color(sk); node.hair = Color(hr); node.outfit = Color(of)
 	node.position = Vector2(c * T)
 	add_child(node)
-	npcs[c] = {"name": n, "lines": lines, "node": node}
+	npcs[c] = {"name": n, "lines": lines, "node": node, "action": action}
 
 func new_grid(w: int, h: int, t: int) -> void:
 	mw = w; mh = h; g = []
@@ -126,7 +187,7 @@ func rect(x: int, y: int, w: int, h: int, t: int) -> void:
 		for xx in range(x, x + w): setc(xx, yy, t)
 
 func door_of(id: String) -> Vector2i:
-	var b = BUILDINGS[id]
+	var b = buildings[id]
 	return Vector2i(b[1] + b[3] / 2, b[2] + b[4] - 1)
 
 func seg_path(pts: Array, wdt: int = 1) -> void:
@@ -142,7 +203,7 @@ func seg_path(pts: Array, wdt: int = 1) -> void:
 				if t == WATER: g[yy][xx] = BRIDGE
 				elif t != BRIDGE and t != STAIRS: g[yy][xx] = PATH
 
-func build_village() -> void:
+func build_rosewood() -> void:
 	var rng := RandomNumberGenerator.new(); rng.seed = 7
 	new_grid(60, 40, GRASS)
 	for y in mh:
@@ -163,8 +224,9 @@ func build_village() -> void:
 	# --- winding main road ---
 	seg_path([Vector2i(0, 19), Vector2i(9, 19), Vector2i(9, 21), Vector2i(19, 21), Vector2i(19, 18), Vector2i(27, 18), Vector2i(27, 20), Vector2i(38, 20), Vector2i(38, 22), Vector2i(50, 22), Vector2i(50, 19), Vector2i(59, 19)], 2)
 	# --- buildings ---
-	for id in BUILDINGS:
-		var b = BUILDINGS[id]
+	buildings = BUILDINGS.duplicate()
+	for id in buildings:
+		var b = buildings[id]
 		rect(b[1], b[2], b[3], b[4] - 1, ROOF)
 		rect(b[1], b[2] + b[4] - 1, b[3], 1, WALL)
 		for yy in range(b[2], b[2] + b[4]):
@@ -209,6 +271,9 @@ func build_village() -> void:
 	setc(5, 9, STONE); signs[Vector2i(5, 9)] = "Lookout: The whole valley below. Rosewood's roofs, the hedge like a red ribbon, the stream glinting. Far north, Thornwild looks... grayer than it should."
 	setc(12, 15, STONE); signs[Vector2i(12, 15)] = "Sign: Lookout Tower, up the stairs. Mind your step."
 	signs[Vector2i(33, 24)] = "The village well. Someone dropped a hairpin in it."
+	exits[Vector2i(0, 19)] = ["hearth_pastures", "W"]; exits[Vector2i(0, 20)] = ["hearth_pastures", "W"]
+	exits[Vector2i(59, 19)] = ["hearth_fields", "E"]; exits[Vector2i(59, 20)] = ["hearth_fields", "E"]
+	hub = SAFE_SPAWN
 	# --- NPCs ---
 	add_npc(Vector2i(29, 35), "Alera", "f5d0a9", "a0452e", "4f7a3a", [
 		"Alera: You stepped on Mrs. Pell's roses.",
@@ -237,8 +302,221 @@ func build_village() -> void:
 			elif r < 0.11: g[y][x] = BUSH
 			elif r < 0.16 and t == GRASS: g[y][x] = FLOWER
 
+
+# ---------------- generated maps ----------------
+func carve1(c: Vector2i) -> void:
+	if c.x < 0 or c.y < 0 or c.x >= mw or c.y >= mh: return
+	var t: int = g[c.y][c.x]
+	if t == WATER: g[c.y][c.x] = BRIDGE
+	elif t == CLIFF: g[c.y][c.x] = STAIRS
+	elif t != BRIDGE and t != STAIRS: g[c.y][c.x] = PATH
+
+func carve2(c: Vector2i) -> void:
+	for dx in 2:
+		for dy in 2: carve1(c + Vector2i(dx, dy))
+
+func walk(a: Vector2i, b: Vector2i, rng: RandomNumberGenerator) -> void:
+	var c := a
+	var n := 0
+	while c != b and n < 4000:
+		n += 1
+		carve2(c)
+		var dx := signi(b.x - c.x); var dy := signi(b.y - c.y)
+		if rng.randf() < 0.22:
+			if rng.randf() < 0.5: c.x = clampi(c.x + (1 if rng.randf() < 0.5 else -1), 3, mw - 5)
+			else: c.y = clampi(c.y + (1 if rng.randf() < 0.5 else -1), 3, mh - 5)
+		elif dx != 0 and (dy == 0 or rng.randf() < float(absi(b.x - c.x)) / float(absi(b.x - c.x) + absi(b.y - c.y))):
+			c.x += dx
+		else:
+			c.y += dy
+	carve2(b)
+
+func gen_map(id: String) -> void:
+	var d: Dictionary = D.WORLD[id]
+	biome = d.biome
+	var bm: Dictionary = D.BIOMES[biome]
+	ground = Color(bm.ground)
+	var rng := RandomNumberGenerator.new(); rng.seed = hash(id)
+	var w: int = d.size[0]; var h: int = d.size[1]
+	new_grid(w, h, GRASS)
+	var wall: int = TILE_NAMES[bm.wall]
+	for y in h:
+		for x in w:
+			var dd = min(min(x, y), min(w - 1 - x, h - 1 - y))
+			if dd < 2 or (dd == 2 and rng.randf() < 0.45): g[y][x] = wall
+	# biome terrain before paths
+	match biome:
+		"river":
+			for y in h:
+				var rx := w / 2 + int(round(4.0 * sin(y * 0.22)))
+				rect(rx - 1, y, 4, 1, WATER)
+		"coast":
+			for x in w:
+				var sh := h - 9 + int(round(1.5 * sin(x * 0.3)))
+				rect(x, sh, 1, h - sh, WATER)
+				rect(x, sh - 3, 1, 3, SAND)
+		"mountain":
+			for k in [h / 3, 2 * h / 3]:
+				for x in range(2, w - 2):
+					var yy: int = k + int(round(1.2 * sin(x * 0.4 + k)))
+					setc(x, yy, CLIFF); setc(x, yy + 1, CLIFF)
+		"snow":
+			if id == "pale_reach":
+				for i in 5:
+					var cx := rng.randi_range(6, w - 8); var cy := rng.randi_range(6, h - 8)
+					rect(cx, cy, rng.randi_range(3, 6), rng.randi_range(2, 4), WATER)
+	hub = Vector2i(w / 2 + rng.randi_range(-w / 6, w / 6), h / 2 + rng.randi_range(-h / 6, h / 6))
+	if biome == "coast": hub.y = mini(hub.y, h - 16)
+	for side in d.links:
+		var e: Vector2i
+		match side:
+			"W": e = Vector2i(0, rng.randi_range(h / 3, 2 * h / 3 - 1))
+			"E": e = Vector2i(w - 1, rng.randi_range(h / 3, 2 * h / 3 - 1))
+			"N": e = Vector2i(rng.randi_range(w / 3, 2 * w / 3 - 1), 0)
+			"S": e = Vector2i(rng.randi_range(w / 3, 2 * w / 3 - 1), h - 1)
+		var along := Vector2i(1, 0) if side in ["N", "S"] else Vector2i(0, 1)
+		var inw: Vector2i = INWARD[side]
+		for k in 2:
+			exits[e + along * k] = [d.links[side], side]
+			for j in 4: carve1(e + along * k + inw * j)
+		walk(e + inw * 3, hub, rng)
+	if biome in ["town", "dungeon"]:
+		rect(hub.x - 3, hub.y - 2, 8, 5, PATH)
+	# buildings (towns)
+	if d.has("buildings"):
+		for bd in d.buildings: place_building(bd, rng)
+	# features after paths
+	match biome:
+		"marsh":
+			for i in 40:
+				var c := Vector2i(rng.randi_range(4, w - 6), rng.randi_range(4, h - 6))
+				var r := rng.randi_range(1, 2)
+				for yy in range(c.y - r, c.y + r + 1):
+					for xx in range(c.x - r, c.x + r + 1):
+						if g[yy][xx] == GRASS and not near_path(Vector2i(xx, yy)): g[yy][xx] = WATER
+		"ruins", "wastes":
+			for i in 26:
+				var c := Vector2i(rng.randi_range(4, w - 8), rng.randi_range(4, h - 8))
+				var hor := rng.randf() < 0.5
+				for k in rng.randi_range(2, 5):
+					var q := c + (Vector2i(k, 0) if hor else Vector2i(0, k))
+					if g[q.y][q.x] == GRASS and not near_path(q): g[q.y][q.x] = RUIN
+		"dungeon":
+			for y in range(4, h - 4, 4):
+				for x in range(4, w - 4, 5):
+					if g[y][x] == GRASS and not near_path(Vector2i(x, y)): g[y][x] = PILLAR
+	# scatter
+	var obst: int = TILE_NAMES[bm.obst]; var deco: int = TILE_NAMES[bm.deco]
+	for y in range(2, h - 2):
+		for x in range(2, w - 2):
+			var t: int = g[y][x]
+			if t != GRASS and t != SAND: continue
+			var r := rng.randf()
+			if near_path(Vector2i(x, y)):
+				if r < bm.decod * 0.6 and deco != BUSH and t == GRASS: g[y][x] = deco
+				continue
+			if r < bm.dens: g[y][x] = obst
+			elif r < bm.dens + bm.decod: g[y][x] = deco
+	# POIs beside the path
+	var pcells := []
+	for y in range(3, h - 3):
+		for x in range(3, w - 3):
+			if g[y][x] == PATH: pcells.append(Vector2i(x, y))
+	var used := []
+	var pois: Array = d.get("pois", []).duplicate()
+	if d.has("boss"): pois.append(["boss"])
+	var pi := 0
+	for poi in pois:
+		pi += 1
+		for attempt in 300:
+			var p: Vector2i = pcells[rng.randi() % pcells.size()]
+			var ok := true
+			for u in used:
+				if (u - p).length() < 7: ok = false; break
+			if not ok: continue
+			var spot := Vector2i(-1, -1)
+			for dd in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1)]:
+				var q: Vector2i = p + dd
+				if q.x < 3 or q.y < 3 or q.x >= w - 3 or q.y >= h - 3: continue
+				if g[q.y][q.x] in [GRASS, SAND, FLOWER, PEBBLE, REED, TREE, BUSH, PINE, ROCK, RUIN, PILLAR] and not bcell.has(q):
+					spot = q; break
+			if spot.x < 0: continue
+			used.append(p)
+			var key := "%s:%d,%d" % [id, spot.x, spot.y]
+			match poi[0]:
+				"sign":
+					g[spot.y][spot.x] = STONE; signs[spot] = "Sign: " + poi[1]
+				"npc":
+					g[spot.y][spot.x] = GRASS
+					var cols := ["f1c27d", "c68642", "e0ac69", "f9dcc4"]
+					add_npc(spot, poi[1], cols[pi % 4], ["6b3e26", "2b1b12", "d8d8d8", "a0452e"][pi % 4], ["7a6a4a", "3a6ea5", "6a4c7a", "8a3a3a"][pi % 4], [poi[2]])
+				"chest":
+					g[spot.y][spot.x] = CHEST_OPEN if key in data.opened else CHEST
+					chests[spot] = poi[1]
+				"camp":
+					g[spot.y][spot.x] = CAMP; camps[spot] = true
+				"boss":
+					g[spot.y][spot.x] = GRASS
+					if not ("boss:" + id) in data.flags:
+						var bd = d.boss
+						var e = D.ENEMIES[bd[0]]
+						add_npc(spot, bd[1], e[2], "1a1a1a", e[2], [bd[2], "%s attacks!" % bd[1]], "boss")
+						boss_cell = spot
+					else:
+						g[spot.y][spot.x] = STONE; signs[spot] = "The place where %s fell." % d.boss[1]
+			break
+
+func near_path(c: Vector2i) -> bool:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var q := c + Vector2i(dx, dy)
+			if q.x < 0 or q.y < 0 or q.x >= mw or q.y >= mh: continue
+			if g[q.y][q.x] in [PATH, DOOR, BRIDGE, STAIRS] or exits.has(q) or npcs.has(q): return true
+	return false
+
+func place_building(bd: Array, rng: RandomNumberGenerator) -> void:
+	var look = TYPE_LOOK[bd[2]]
+	var bw: int = look[2]; var bh: int = look[3]
+	for attempt in 600:
+		var x := rng.randi_range(3, mw - bw - 4); var y := rng.randi_range(3, mh - bh - 5)
+		var ok := true
+		for yy in range(y - 1, y + bh + 1):
+			for xx in range(x - 1, x + bw + 1):
+				if g[yy][xx] != GRASS or bcell.has(Vector2i(xx, yy)) or exits.has(Vector2i(xx, yy)): ok = false
+		if not ok: continue
+		var dc := Vector2i(x + bw / 2, y + bh - 1)
+		var c := dc + Vector2i(0, 1)
+		var line := []
+		var hit := false
+		for k in 12:
+			if c.y >= mh - 2 or bcell.has(c) or g[c.y][c.x] in [WATER, CLIFF]: break
+			if g[c.y][c.x] == PATH: hit = true; break
+			line.append(c); c += Vector2i(0, 1)
+		if not hit: continue
+		for q in line: g[q.y][q.x] = PATH
+		buildings[bd[0]] = [bd[1], x, y, bw, bh, look[0], look[1], bd[2]]
+		binfo[bd[0]] = bd
+		rect(x, y, bw, bh - 1, ROOF); rect(x, y + bh - 1, bw, 1, WALL)
+		for yy in range(y, y + bh):
+			for xx in range(x, x + bw): bcell[Vector2i(xx, yy)] = bd[0]
+		g[dc.y][dc.x] = DOOR
+		return
+
 func build_interior(id: String) -> void:
-	var it = INTERIORS[id]
+	var parts := id.split("/")
+	biome = "interior"
+	var it
+	var npcdefs := []
+	if parts[0] == "rosewood":
+		it = INTERIORS[parts[1]]
+		npcdefs = it[4]
+	else:
+		var bd: Array = []
+		for b in D.WORLD[parts[0]].buildings:
+			if b[0] == parts[1]: bd = b
+		it = INTERIORS[bd[2]]
+		var pos = it[4][0] if it[4].size() > 0 else [it[0] / 2, 2]
+		npcdefs = [[pos[0], pos[1], bd[3], "e0b48a", "4a3a2a", TYPE_LOOK[bd[2]][0], bd[4], bd[5]]]
 	var w: int = it[0] + 2; var h: int = it[1] + 3
 	new_grid(w, h, FLOOR)
 	rect(0, 0, w, 2, IWALL); rect(0, 0, 1, h, IWALL); rect(w - 1, 0, 1, h, IWALL); rect(0, h - 1, w, 1, IWALL)
@@ -249,10 +527,17 @@ func build_interior(id: String) -> void:
 		rect(r.position.x, r.position.y, r.size.x, r.size.y, FURN)
 		for yy in range(r.position.y, r.end.y):
 			for xx in range(r.position.x, r.end.x): signs[Vector2i(xx, yy)] = "It's a %s." % f[5]
-	for n in it[4]:
+	for n in npcdefs:
 		var line: String = n[6]
 		if "%s" in line: line = line % data.name
-		add_npc(Vector2i(n[0] + 1, n[1] + 2), n[2], n[3], n[4], n[5], [line])
+		var act := ""
+		if n.size() > 7: act = n[7]
+		elif parts[0] == "rosewood" and parts[1] == "inn" and n[2] == "Bess": act = "rest"
+		elif parts[0] == "rosewood" and parts[1] == "store": act = "shop"
+		add_npc(Vector2i(n[0] + 1, n[1] + 2), n[2], n[3], n[4], n[5], [line], act)
+	interior_ctx = it
+
+var interior_ctx = null
 
 func solid(c: Vector2i) -> bool:
 	if c.x < 0 or c.y < 0 or c.x >= mw or c.y >= mh: return true
@@ -262,19 +547,49 @@ func solid(c: Vector2i) -> bool:
 func _draw() -> void:
 	var rng := RandomNumberGenerator.new(); rng.seed = 3
 	var font := ThemeDB.fallback_font
-	var interior := map_id != "village"
-	var fl := Color(INTERIORS[map_id][2]) if interior else Color.WHITE
+	var interior := "/" in map_id
+	var fl := Color(interior_ctx[2]) if interior else Color.WHITE
 	for y in mh:
 		for x in mw:
 			var p := Vector2(x * T, y * T)
 			var t: int = g[y][x]
 			if not interior:
-				var hi := x <= 18 and y <= 13
-				var gc := Color("74b35a") if hi else Color("5e9e4a")
+				var hi := map_id == "rosewood" and x <= 18 and y <= 13
+				var gc := Color("74b35a") if hi else ground
 				draw_rect(Rect2(p, Vector2(T, T)), gc if (x + y) % 2 == 0 else gc.darkened(0.03))
 			match t:
 				GRASS:
-					if rng.randf() < 0.3: draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(1, 2)), Color("4b843a"))
+					if rng.randf() < 0.3: draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(1, 2)), ground.darkened(0.18))
+				SAND:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("dcc898"))
+					if rng.randf() < 0.3: draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(1, 1)), Color("b8a070"))
+				ROCK:
+					draw_circle(p + Vector2(8, 9), 7, Color("6a6660")); draw_circle(p + Vector2(6, 7), 4, Color("8a8680")); draw_rect(Rect2(p + Vector2(2, 13), Vector2(12, 2)), Color("4a4640"))
+				CAVEWALL:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("2a2624") if biome != "dungeon" else Color("231e2a"))
+					draw_rect(Rect2(p + Vector2(1, 1), Vector2(14, 10)), Color("3c3633") if biome != "dungeon" else Color("3a3248"))
+				PINE:
+					draw_rect(Rect2(p + Vector2(7, 11), Vector2(2, 5)), Color("5b3b22"))
+					draw_colored_polygon(PackedVector2Array([p + Vector2(8, 0), p + Vector2(15, 12), p + Vector2(1, 12)]), Color("2a5a44"))
+					draw_colored_polygon(PackedVector2Array([p + Vector2(8, 0), p + Vector2(11, 5), p + Vector2(5, 5)]), Color("f0f4f8"))
+				REED:
+					for i in 3: draw_line(p + Vector2(4 + i * 4, 15), p + Vector2(3 + i * 4, 5 + i), Color("8a8a4a"))
+				PEBBLE:
+					draw_rect(Rect2(p + Vector2(rng.randi_range(2, 11), rng.randi_range(2, 11)), Vector2(3, 2)), ground.darkened(0.3))
+				RUIN:
+					draw_rect(Rect2(p + Vector2(1, 4), Vector2(14, 11)), Color("9a968c")); draw_rect(Rect2(p + Vector2(1, 4), Vector2(14, 11)), Color("6a665c"), false, 1)
+					draw_line(p + Vector2(1, 9), p + Vector2(15, 9), Color("6a665c")); draw_rect(Rect2(p + Vector2(rng.randi_range(2, 10), 2), Vector2(4, 3)), Color("9a968c"))
+				PILLAR:
+					draw_rect(Rect2(p + Vector2(4, 1), Vector2(8, 15)), Color("6a6278")); draw_rect(Rect2(p + Vector2(3, 1), Vector2(10, 3)), Color("8a82a0")); draw_rect(Rect2(p + Vector2(3, 13), Vector2(10, 3)), Color("8a82a0"))
+				CHEST, CHEST_OPEN:
+					draw_rect(Rect2(p + Vector2(2, 5), Vector2(12, 10)), Color("9a6a2a")); draw_rect(Rect2(p + Vector2(2, 5), Vector2(12, 10)), Color("4a2a10"), false, 1)
+					if t == CHEST:
+						draw_rect(Rect2(p + Vector2(2, 4), Vector2(12, 4)), Color("b8823a")); draw_rect(Rect2(p + Vector2(7, 7), Vector2(2, 3)), Color("f0d060"))
+					else:
+						draw_rect(Rect2(p + Vector2(3, 6), Vector2(10, 4)), Color("1a1008")); draw_rect(Rect2(p + Vector2(2, 1), Vector2(12, 3)), Color("b8823a"))
+				CAMP:
+					for i in 4: draw_line(p + Vector2(2 + i * 3, 15), p + Vector2(14 - i * 3, 11), Color("5b3b22"), 2)
+					draw_circle(p + Vector2(8, 9), 4, Color("e8702a")); draw_circle(p + Vector2(8, 10), 2, Color("f8d860"))
 				FLOWER:
 					for i in 3:
 						draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(2, 2)), [Color("e8506a"), Color("f4e06d"), Color("f0f0f0")][rng.randi() % 3])
@@ -285,11 +600,11 @@ func _draw() -> void:
 					draw_rect(Rect2(p + Vector2(6, 10), Vector2(4, 6)), Color("5b3b22"))
 					draw_circle(p + Vector2(8, 7), 7, Color("2f6b30")); draw_circle(p + Vector2(6, 5), 3, Color("3f8a3d"))
 				ROOF:
-					var rc := Color(BUILDINGS[bcell[Vector2i(x, y)]][5])
+					var rc := Color(buildings[bcell[Vector2i(x, y)]][5])
 					draw_rect(Rect2(p, Vector2(T, T)), rc)
 					draw_line(p + Vector2(0, 4), p + Vector2(T, 4), rc.darkened(0.25)); draw_line(p + Vector2(0, 11), p + Vector2(T, 11), rc.darkened(0.25))
 				WALL, DOOR:
-					var wc := Color(BUILDINGS[bcell[Vector2i(x, y)]][6])
+					var wc := Color(buildings[bcell[Vector2i(x, y)]][6])
 					draw_rect(Rect2(p, Vector2(T, T)), wc)
 					if t == WALL:
 						draw_rect(Rect2(p + Vector2(4, 4), Vector2(8, 6)), Color("4a6a8a")); draw_rect(Rect2(p + Vector2(4, 4), Vector2(8, 6)), Color("6b4a2a"), false, 1)
@@ -346,6 +661,7 @@ func _draw() -> void:
 					if y == 1 and x > 0 and x < mw - 1: draw_rect(Rect2(p + Vector2(0, 12), Vector2(T, 4)), Color("6a5048"))
 				EXIT:
 					draw_rect(Rect2(p, Vector2(T, T)), Color("c9a86a")); draw_rect(Rect2(p + Vector2(2, 2), Vector2(12, 12)), Color("e8d8a0"), false, 1)
+
 	if interior:
 		for f in furn:
 			var r := Rect2(Vector2(f[0].position * T) + Vector2(1, 1), Vector2(f[0].size * T) - Vector2(2, 2))
@@ -353,18 +669,24 @@ func _draw() -> void:
 			draw_rect(Rect2(r.position, Vector2(r.size.x, 3)), f[1].lightened(0.25))
 	else:
 		draw_building_details(font)
+		for e in exits:
+			var p := Vector2(e * T)
+			draw_rect(Rect2(p + Vector2(2, 2), Vector2(12, 12)), Color(1, 1, 0.8, 0.35))
+		if biome == "cave" or biome == "dungeon":
+			pass
 
 func draw_building_details(font: Font) -> void:
-	for id in BUILDINGS:
-		var b = BUILDINGS[id]
+	for id in buildings:
+		var b = buildings[id]
 		var o := Vector2(b[1] * T, b[2] * T); var wpx: float = b[3] * T; var hpx: float = (b[4] - 1) * T
-		match id:
+		var btype: String = b[7] if b.size() > 7 else id
+		match btype:
 			"chapel":
 				draw_rect(Rect2(o + Vector2(wpx / 2 - 4, -10), Vector2(8, 12)), Color("e8e8ec"))
 				draw_rect(Rect2(o + Vector2(wpx / 2 - 1, -16), Vector2(2, 8)), Color("e0c060")); draw_rect(Rect2(o + Vector2(wpx / 2 - 4, -13), Vector2(8, 2)), Color("e0c060"))
 			"inn", "smithy", "home", "hall":
 				draw_rect(Rect2(o + Vector2(wpx - 14, -6), Vector2(6, 10)), Color("6a5a5a"))
-				if id == "smithy": draw_circle(o + Vector2(wpx - 11, -9), 3, Color(0.7, 0.7, 0.7, 0.6))
+				if btype == "smithy": draw_circle(o + Vector2(wpx - 11, -9), 3, Color(0.7, 0.7, 0.7, 0.6))
 			"store":
 				for i in int(b[3] * 2): draw_rect(Rect2(o + Vector2(i * 8, hpx - 4), Vector2(8, 5)), Color("e8e0d0") if i % 2 == 0 else Color("c8283e"))
 			"mill":
@@ -395,7 +717,7 @@ func draw_building_details(font: Font) -> void:
 func build_ui() -> void:
 	ui = CanvasLayer.new(); add_child(ui)
 	loc = Label.new()
-	loc.anchor_left = 1.0; loc.anchor_right = 1.0; loc.offset_left = -220; loc.offset_right = -8; loc.offset_top = 8
+	loc.anchor_left = 1.0; loc.anchor_right = 1.0; loc.offset_left = -260; loc.offset_right = -8; loc.offset_top = 8
 	loc.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	loc.add_theme_color_override("font_outline_color", Color.BLACK); loc.add_theme_constant_override("outline_size", 4)
 	ui.add_child(loc)
@@ -405,62 +727,166 @@ func build_ui() -> void:
 	dialog_label.custom_minimum_size = Vector2(500, 50)
 	dialog.add_child(dialog_label); dialog.visible = false
 	ui.add_child(dialog)
+	wmap = Control.new(); wmap.set_anchors_preset(Control.PRESET_FULL_RECT); wmap.visible = false
+	wmap.draw.connect(draw_world_map)
+	ui.add_child(wmap)
 	fade = ColorRect.new(); fade.color = Color(0, 0, 0, 0); fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE; ui.add_child(fade)
 
-func say(lines: Array) -> void:
-	talk_lines = lines; talk_i = 0
+func base_map() -> String:
+	return map_id.split("/")[0]
+
+func draw_world_map() -> void:
+	var c := wmap
+	c.draw_rect(Rect2(Vector2.ZERO, Vector2(640, 360)), Color(0.07, 0.06, 0.08, 0.94))
+	var font := ThemeDB.fallback_font
+	var ids := []
+	for id in D.WORLD:
+		if allowed.size() == 0 or id in allowed: ids.append(id)
+	var minx := 999.0; var maxx := -999.0; var miny := 999.0; var maxy := -999.0
+	for id in ids:
+		var p = D.WORLD[id].pos
+		minx = min(minx, p[0]); maxx = max(maxx, p[0]); miny = min(miny, p[1]); maxy = max(maxy, p[1])
+	var sx: float = 560.0 / max(1.0, maxx - minx); var sy: float = 230.0 / max(1.0, maxy - miny)
+	var sc: float = min(sx, sy, 60.0)
+	var off := Vector2(320 - (maxx + minx) * 0.5 * sc, 175 - (maxy + miny) * 0.5 * sc)
+	var P := func(id): return off + Vector2(D.WORLD[id].pos[0], D.WORLD[id].pos[1]) * sc
+	for id in ids:
+		for side in D.WORLD[id].links:
+			var o: String = D.WORLD[id].links[side]
+			if o in ids: c.draw_line(P.call(id), P.call(o), Color("8a7a5a"), 2)
+	var bcol := {"village": "e8b0c0", "town": "f0d080", "dungeon": "c04050", "plains": "8ac860", "forest": "3f8a3d", "river": "5aa0e0", "coast": "70c0d0", "marsh": "7a8a5a", "mountain": "a09a88", "cave": "6a5a50", "ruins": "b0a890", "snow": "e8f0ff", "wastes": "8a6aa0"}
+	for id in ids:
+		var w = D.WORLD[id]
+		var p: Vector2 = P.call(id)
+		var r := 7.0 if w.biome in ["town", "village", "dungeon"] else 5.0
+		if w.biome == "dungeon":
+			c.draw_rect(Rect2(p - Vector2(r, r), Vector2(r, r) * 2), Color(bcol[w.biome]))
+		else:
+			c.draw_circle(p, r, Color(bcol[w.biome]))
+		if id == base_map(): c.draw_arc(p, r + 4, 0, TAU, 20, Color.WHITE, 2)
+		var name: String = w.name
+		var fs := 8
+		var sz := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		c.draw_string(font, p + Vector2(-sz.x / 2, r + 10), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
+	var s := D.stats(data)
+	c.draw_string(font, Vector2(14, 22), "WORLD MAP - Calder", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("d4485e"))
+	c.draw_string(font, Vector2(14, 340), "%s  %s Lv %d   HP %d/%d  MP %d/%d   XP %d/%d   Gold %d   Potions %d  Ethers %d     (M / Esc: close)" % [data.name, data.cls, data.lv, data.hp, s.hp, data.mp, s.mp, data.xp, D.xp_need(data.lv), data.gold, data.potions, data.ethers], HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.85, 0.85, 0.85))
+	c.draw_string(font, Vector2(14, 352), "Squares = dungeons, big dots = towns. Story gating is off in this build: everything is open.", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.6, 0.6, 0.6))
+
+func say(lines: Array, after := Callable()) -> void:
+	talk_lines = lines; talk_i = 0; talk_after = after
 	dialog_label.text = lines[0] + "  >>"; dialog.visible = true
 
 func _unhandled_input(e: InputEvent) -> void:
-	if e is InputEventKey and e.pressed and not e.echo:
-		if e.keycode == KEY_ESCAPE:
-			quit_to_title.emit(); return
-		if e.keycode == KEY_F5:
-			save_requested.emit(snapshot()); say(["Game saved."]); return
-		if e.keycode in [KEY_E, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
-			interact()
+	if not (e is InputEventKey and e.pressed and not e.echo): return
+	if wmap.visible:
+		if e.keycode in [KEY_M, KEY_ESCAPE, KEY_TAB]: wmap.visible = false
+		get_viewport().set_input_as_handled(); return
+	if e.keycode == KEY_ESCAPE:
+		quit_to_title.emit(); return
+	if e.keycode in [KEY_M, KEY_TAB] and not dialog.visible:
+		wmap.visible = true; wmap.queue_redraw(); return
+	if e.keycode == KEY_F5:
+		save_requested.emit(snapshot()); say(["Game saved."]); return
+	if e.keycode in [KEY_E, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
+		interact()
 
 func snapshot() -> Dictionary:
-	var d := data.duplicate(); d["cell"] = [cell.x, cell.y]; d["map"] = map_id
+	var d := data.duplicate(true); d["cell"] = [cell.x, cell.y]; d["map"] = map_id
 	return d
 
 func interact() -> void:
 	if dialog.visible:
 		talk_i += 1
-		if talk_i >= talk_lines.size(): dialog.visible = false
+		if talk_i >= talk_lines.size():
+			dialog.visible = false
+			if talk_after.is_valid():
+				var cb := talk_after; talk_after = Callable(); cb.call()
 		else: dialog_label.text = talk_lines[talk_i] + "  >>"
 		return
 	var c: Vector2i = cell + player.facing
 	if c.x < 0 or c.y < 0 or c.x >= mw or c.y >= mh: return
 	if npcs.has(c):
-		var n = npcs[c]; n.node.facing = -player.facing; n.node.queue_redraw(); say(n.lines)
+		var n = npcs[c]; n.node.facing = -player.facing; n.node.queue_redraw()
+		match n.action:
+			"rest":
+				say(n.lines + ["You rest. HP and MP fully restored."], func(): heal_full())
+			"shop":
+				if data.gold >= 15:
+					data.gold -= 15; data.potions += 1
+					say(n.lines + ["Bought a Potion for 15 gold. (Potions: %d, Gold: %d) Talk again to buy more." % [data.potions, data.gold]])
+				else:
+					say(n.lines + ["Not enough gold. (Gold: %d)" % data.gold])
+			"boss":
+				var bid: String = D.WORLD[base_map()].boss[0]
+				var lv: int = D.WORLD[base_map()].lv[1] + 1
+				say(n.lines, func(): encounter.emit([[bid, lv]], biome))
+			_:
+				say(n.lines)
+	elif chests.has(c) and g[c.y][c.x] == CHEST:
+		var item = chests[c]
+		var key := "%s:%d,%d" % [map_id, c.x, c.y]
+		data.opened.append(key); g[c.y][c.x] = CHEST_OPEN; queue_redraw()
+		if item is String and item == "potion": data.potions += 1; say(["Found a Potion!"])
+		elif item is String and item == "ether": data.ethers += 1; say(["Found an Ether!"])
+		else: data.gold += int(item); say(["Found %d gold!" % int(item)])
+	elif chests.has(c):
+		say(["Empty."])
+	elif camps.has(c):
+		say(["You rest by the campfire. HP and MP restored. (Press F5 to save.)"], func(): heal_full())
 	elif signs.has(c): say([signs[c]])
 	elif g[c.y][c.x] == HEDGE: say(["Wild roses. Somebody takes very good care of these."])
 
-func transition(id: String, c: Vector2i, f: Vector2i) -> void:
+func heal_full() -> void:
+	var s := D.stats(data); data.hp = s.hp; data.mp = s.mp
+
+func boss_defeated() -> void:
+	var id := base_map()
+	if not ("boss:" + id) in data.flags: data.flags.append("boss:" + id)
+	if boss_cell.x >= 0 and npcs.has(boss_cell):
+		npcs[boss_cell].node.queue_free(); npcs.erase(boss_cell)
+		g[boss_cell.y][boss_cell.x] = STONE; signs[boss_cell] = "The place where %s fell." % D.WORLD[id].boss[1]
+		queue_redraw()
+
+func transition(id: String, spec: Dictionary, f: Vector2i) -> void:
 	moving = true
 	var tw := create_tween()
 	tw.tween_property(fade, "color:a", 1.0, 0.15)
 	tw.tween_callback(func():
-		load_map(id, c); player.facing = f; player.queue_redraw())
+		load_map(id, spec); player.facing = f; player.queue_redraw())
 	tw.tween_property(fade, "color:a", 0.0, 0.15)
 	tw.finished.connect(func(): moving = false)
 
 func on_arrive() -> void:
 	var t: int = g[cell.y][cell.x]
-	if t == DOOR and map_id == "village":
+	if exits.has(cell):
+		var ex = exits[cell]
+		transition(ex[0], {"from": base_map()}, OPP_DIR(ex[1]))
+	elif t == DOOR and not "/" in map_id:
 		var id: String = bcell[cell]
-		var w: int = INTERIORS[id][0] + 2; var h: int = INTERIORS[id][1] + 3
-		transition(id, Vector2i(w / 2, h - 2), Vector2i(0, -1))
+		transition(map_id + "/" + id, {"cell": Vector2i(-1, -1)}, Vector2i(0, -1))
 	elif t == EXIT:
-		var dc := door_of(map_id)
-		transition("village", dc + Vector2i(0, 1), Vector2i(0, 1))
+		var parts := map_id.split("/")
+		transition(parts[0], {"door": parts[1]}, Vector2i(0, 1))
 	else:
 		moving = false
+		var d = D.WORLD.get(map_id, {})
+		if d.get("foes", []).size() > 0:
+			steps += 1
+			if steps > 8 and enc_rng.randf() < 1.0 / float(d.rate):
+				steps = 0
+				var foes := []
+				var n := enc_rng.randi_range(1, 3 if data.lv >= 3 else 2)
+				for i in n:
+					foes.append([d.foes[enc_rng.randi() % d.foes.size()], enc_rng.randi_range(d.lv[0], d.lv[1])])
+				encounter.emit(foes, biome)
+
+func OPP_DIR(side: String) -> Vector2i:
+	return -INWARD[side]
 
 func _process(_d: float) -> void:
-	if moving or dialog.visible: return
+	if moving or dialog.visible or wmap.visible: return
 	var dir := Vector2i.ZERO
 	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W): dir = Vector2i(0, -1)
 	elif Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S): dir = Vector2i(0, 1)
