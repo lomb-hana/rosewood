@@ -3,21 +3,23 @@ extends Node2D
 signal quit_to_title
 signal save_requested(d)
 const T := 16
-enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN}
-const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN]
+enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN, HIGH, CLIFF, STAIRS, BUSH, LAMP, BENCH, CRATE, BARREL, BRIDGE}
+const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL]
+const SAFE_SPAWN := Vector2i(24, 18)
 const CharScript := preload("res://character.gd")
 
 # id: [name, x, y, w, h, roof, wall]   (door = bottom row, middle)
 const BUILDINGS := {
-	"home":   ["Your Home", 4, 6, 5, 4, "8a5a34", "d8c39a"],
-	"alera":  ["Alera's House", 11, 6, 5, 4, "c46a86", "efe0c8"],
-	"chapel": ["Hedge Chapel", 18, 4, 5, 6, "6a4c8a", "e8e8ec"],
-	"hall":   ["Elder's Hall", 32, 5, 8, 5, "4a5f7a", "cdbf9f"],
-	"inn":    ["Thorn & Kettle Inn", 42, 5, 8, 5, "3f7a4a", "d9b98a"],
-	"store":  ["General Store", 31, 21, 6, 4, "c27c2c", "e0cfa8"],
-	"smithy": ["Blacksmith", 39, 21, 5, 4, "4a4a52", "8f8a86"],
-	"mill":   ["Old Mill", 47, 20, 5, 5, "7a6a4a", "b8a27e"],
-	"barn":   ["Tam's Barn", 15, 21, 6, 5, "a3423c", "c0705a"],
+	"home":   ["Your Home", 21, 10, 5, 4, "8a5a34", "d8c39a"],
+	"alera":  ["Alera's House", 28, 12, 5, 4, "c46a86", "efe0c8"],
+	"chapel": ["Hedge Chapel", 46, 5, 5, 6, "6a4c8a", "e8e8ec"],
+	"hall":   ["Elder's Hall", 29, 3, 7, 5, "4a5f7a", "cdbf9f"],
+	"inn":    ["Thorn & Kettle Inn", 21, 24, 8, 5, "3f7a4a", "d9b98a"],
+	"store":  ["General Store", 12, 24, 6, 4, "c27c2c", "e0cfa8"],
+	"smithy": ["Blacksmith", 50, 25, 5, 4, "4a4a52", "8f8a86"],
+	"mill":   ["Old Mill", 43, 27, 5, 5, "7a6a4a", "b8a27e"],
+	"barn":   ["Tam's Barn", 3, 26, 6, 5, "a3423c", "c0705a"],
+	"tower":  ["Lookout Tower", 7, 3, 3, 5, "707078", "9a9aa2"],
 }
 # interior: [w, h, floor color, furniture [x,y,w,h,color,label], npcs [x,y,name,skin,hair,outfit,line]]
 const INTERIORS := {
@@ -37,6 +39,8 @@ const INTERIORS := {
 		[[5,3,"Dorran","a8754a","2b1b12","4a4a52","Dorran: Mind the sparks. I'll have something sharp for you once there's coin."]]],
 	"mill": [9, 9, "8a7a5a", [[3,2,3,3,"9a9aa0","millstone"],[1,6,1,1,"e0d0a0","sack"],[2,6,1,1,"e0d0a0","sack"],[7,1,1,4,"6b4a2a","gears"]],
 		[[6,5,"Hobb","e0ac69","6b3e26","7a6a4a","Hobb: Wheel's been groaning since the gray came. Even the river feels tired."]]],
+	"tower": [7, 7, "8a8a90", [[0,0,2,2,"6b4a2a","ladder"],[5,0,2,1,"6a5a4a","weapon rack"],[3,3,1,1,"b0915a","brazier"]],
+		[[4,1,"Watchman Corin","e0ac69","3a3a5a","4a5f7a","Corin: Climb up for the view sometime. From here you can see the hedge, the mill, and, lately, gray creeping in from Thornwild."]]],
 	"barn": [11, 9, "7a6a3a", [[1,1,2,2,"d9c060","hay"],[1,3,2,1,"d9c060","hay"],[6,1,1,3,"6b4a2a","stall"],[9,1,1,3,"6b4a2a","stall"]],
 		[[8,2,"Buttercup","f0f0f0","3a3a3a","f0f0f0","Buttercup the cow: Moo. (She seems worried about the crops too.)"]]],
 }
@@ -75,7 +79,7 @@ func _ready() -> void:
 	player.add_child(cam)
 	build_ui()
 	var m: String = data.get("map", "village")
-	var c := Vector2i(27, 20)
+	var c := SAFE_SPAWN
 	if data.has("cell"): c = Vector2i(int(data.cell[0]), int(data.cell[1]))
 	load_map(m if (m == "village" or INTERIORS.has(m)) else "village", c)
 
@@ -87,6 +91,11 @@ func load_map(id: String, c: Vector2i) -> void:
 	if id == "village": build_village()
 	else: build_interior(id)
 	cell = c
+	var bad := cell.x < 0 or cell.y < 0 or cell.x >= mw or cell.y >= mh
+	if not bad: bad = solid(cell) or g[cell.y][cell.x] in [DOOR, EXIT]
+	if bad:
+		if id == "village": cell = SAFE_SPAWN
+		else: cell = Vector2i(mw / 2, mh - 2)
 	player.position = Vector2(cell * T)
 	var wpx := mw * T; var hpx := mh * T
 	cam.limit_left = 0 if wpx >= 320 else (wpx - 320) / 2
@@ -120,20 +129,40 @@ func door_of(id: String) -> Vector2i:
 	var b = BUILDINGS[id]
 	return Vector2i(b[1] + b[3] / 2, b[2] + b[4] - 1)
 
+func seg_path(pts: Array, wdt: int = 1) -> void:
+	for i in range(pts.size() - 1):
+		var p0: Vector2i = pts[i]; var p1: Vector2i = pts[i + 1]
+		var x0 := mini(p0.x, p1.x); var y0 := mini(p0.y, p1.y)
+		var w := absi(p1.x - p0.x) + (wdt if p0.y == p1.y else wdt)
+		var h := absi(p1.y - p0.y) + wdt
+		for yy in range(y0, y0 + h):
+			for xx in range(x0, x0 + w):
+				if xx < 0 or yy < 0 or xx >= mw or yy >= mh: continue
+				var t: int = g[yy][xx]
+				if t == WATER: g[yy][xx] = BRIDGE
+				elif t != BRIDGE and t != STAIRS: g[yy][xx] = PATH
+
 func build_village() -> void:
 	var rng := RandomNumberGenerator.new(); rng.seed = 7
-	new_grid(56, 36, GRASS)
+	new_grid(60, 40, GRASS)
 	for y in mh:
 		for x in mw:
 			var d = min(min(x, y), min(mw - 1 - x, mh - 1 - y))
-			if d < 2 or (d == 2 and rng.randf() < 0.4): g[y][x] = TREE
-			elif rng.randf() < 0.04: g[y][x] = FLOWER
-	rect(0, 17, 56, 2, PATH)          # main road
-	rect(27, 3, 2, 25, PATH)          # north-south road
-	rect(23, 14, 10, 7, PATH)         # plaza
-	rect(18, 26, 34, 1, PATH)         # south lane
-	setc(30, 15, WELL)
-	setc(31, 20, STONE); signs[Vector2i(31, 20)] = "Sign: ROSEWOOD. Mind the roses."
+			if d < 2 or (d == 2 and rng.randf() < 0.45): g[y][x] = TREE
+	# --- cliff plateau (top-left) ---
+	for y in range(2, 14):
+		for x in range(2, 19):
+			if g[y][x] == TREE and (x < 2 or y < 2): continue
+			if y >= 12 or x >= 17: g[y][x] = CLIFF
+			elif g[y][x] != TREE: g[y][x] = HIGH
+	rect(10, 12, 2, 2, STAIRS)
+	# --- stream ---
+	for y in mh:
+		var sx := 41 + int(round(2.0 * sin(y * 0.35)))
+		rect(sx, y, 2, 1, WATER)
+	# --- winding main road ---
+	seg_path([Vector2i(0, 19), Vector2i(9, 19), Vector2i(9, 21), Vector2i(19, 21), Vector2i(19, 18), Vector2i(27, 18), Vector2i(27, 20), Vector2i(38, 20), Vector2i(38, 22), Vector2i(50, 22), Vector2i(50, 19), Vector2i(59, 19)], 2)
+	# --- buildings ---
 	for id in BUILDINGS:
 		var b = BUILDINGS[id]
 		rect(b[1], b[2], b[3], b[4] - 1, ROOF)
@@ -142,30 +171,71 @@ func build_village() -> void:
 			for xx in range(b[1], b[1] + b[3]): bcell[Vector2i(xx, yy)] = id
 		var dc := door_of(id)
 		setc(dc.x, dc.y, DOOR)
-		var y0 := dc.y + 1
-		var y1 := 16 if dc.y < 17 else 25
-		rect(dc.x, y0, 1, max(1, y1 - y0 + 1), PATH)
-	# farm field + fence
-	rect(4, 21, 10, 1, FENCE); rect(4, 27, 10, 1, FENCE); rect(4, 22, 1, 5, FENCE); rect(13, 22, 1, 5, FENCE)
-	setc(13, 24, GRASS)
-	rect(5, 22, 8, 5, CROP)
-	setc(45, 23, STONE); signs[Vector2i(45, 23)] = "An anvil, still warm."
-	# the Hedge garden
-	rect(22, 28, 13, 1, HEDGE); rect(22, 33, 13, 1, HEDGE); rect(22, 28, 1, 6, HEDGE); rect(34, 28, 1, 6, HEDGE)
-	rect(23, 29, 11, 4, FLOWER)
-	rect(27, 27, 2, 3, PATH)
-	for p in [Vector2i(24, 30), Vector2i(25, 32), Vector2i(31, 30), Vector2i(32, 32)]: setc(p.x, p.y, STONE)
-	signs[Vector2i(24, 30)] = "A gravestone. The roses over it are the reddest."
-	rect(44, 28, 6, 4, WATER)
-	rect(22, 11, 3, 1, HEDGE); rect(31, 11, 3, 1, HEDGE)
-	add_npc(Vector2i(28, 31), "Alera", "f5d0a9", "a0452e", "4f7a3a", [
+	# --- lanes to doors ---
+	seg_path([Vector2i(10, 14), Vector2i(10, 19)])                       # cliff stairs -> road
+	seg_path([Vector2i(10, 11), Vector2i(10, 9), Vector2i(8, 9), Vector2i(8, 8)])   # plateau -> tower
+	seg_path([Vector2i(23, 14), Vector2i(23, 18)])                       # home
+	seg_path([Vector2i(30, 16), Vector2i(30, 20)])                       # alera
+	seg_path([Vector2i(32, 8), Vector2i(35, 8), Vector2i(35, 20)])       # hall
+	seg_path([Vector2i(48, 11), Vector2i(48, 15), Vector2i(50, 15), Vector2i(50, 19)])  # chapel
+	seg_path([Vector2i(25, 29), Vector2i(25, 30), Vector2i(30, 30), Vector2i(30, 21)])  # inn
+	seg_path([Vector2i(30, 30), Vector2i(30, 33)])                       # garden
+	seg_path([Vector2i(15, 28), Vector2i(15, 29), Vector2i(19, 29), Vector2i(19, 22)])  # store
+	seg_path([Vector2i(52, 29), Vector2i(54, 29), Vector2i(54, 24), Vector2i(51, 24)])  # smithy
+	seg_path([Vector2i(45, 32), Vector2i(48, 32), Vector2i(48, 24)])     # mill
+	seg_path([Vector2i(6, 31), Vector2i(10, 31), Vector2i(10, 21)])      # barn
+	rect(31, 23, 5, 4, PATH)                                             # little square
+	setc(33, 24, WELL)
+	# --- the Hedge garden ---
+	rect(24, 32, 11, 1, HEDGE); rect(24, 37, 11, 1, HEDGE); rect(24, 32, 1, 6, HEDGE); rect(34, 32, 1, 6, HEDGE)
+	rect(25, 33, 9, 4, FLOWER)
+	rect(30, 32, 1, 3, PATH)
+	for p in [Vector2i(26, 34), Vector2i(27, 36), Vector2i(32, 34), Vector2i(33, 36)]: setc(p.x, p.y, STONE)
+	signs[Vector2i(26, 34)] = "A gravestone. The roses over it are the reddest."
+	# --- farm ---
+	rect(11, 32, 10, 1, FENCE); rect(11, 36, 10, 1, FENCE); rect(11, 33, 1, 3, FENCE); rect(20, 33, 1, 3, FENCE)
+	rect(12, 33, 8, 3, CROP); setc(11, 34, GRASS)
+	# --- small gardens ---
+	rect(26, 11, 2, 2, FLOWER); rect(19, 12, 2, 1, FLOWER); rect(33, 14, 2, 2, FLOWER)
+	rect(33, 13, 3, 1, FENCE); rect(36, 14, 1, 2, FENCE)
+	rect(44, 7, 2, 3, FLOWER); rect(3, 24, 4, 1, FLOWER)
+	# --- props ---
+	for p in [Vector2i(20, 28), Vector2i(29, 27)]: setc(p.x, p.y, BARREL)
+	for p in [Vector2i(18, 26), Vector2i(18, 27), Vector2i(55, 27)]: setc(p.x, p.y, CRATE)
+	setc(56, 27, BARREL); setc(55, 26, STONE); signs[Vector2i(55, 26)] = "An anvil, still warm."
+	for p in [Vector2i(32, 26), Vector2i(4, 10), Vector2i(36, 34)]: setc(p.x, p.y, BENCH)
+	for p in [Vector2i(8, 18), Vector2i(18, 17), Vector2i(26, 17), Vector2i(37, 19), Vector2i(46, 24), Vector2i(52, 18), Vector2i(31, 22), Vector2i(12, 11)]:
+		if g[p.y][p.x] in [GRASS, HIGH]: setc(p.x, p.y, LAMP)
+	setc(5, 9, STONE); signs[Vector2i(5, 9)] = "Lookout: The whole valley below. Rosewood's roofs, the hedge like a red ribbon, the stream glinting. Far north, Thornwild looks... grayer than it should."
+	setc(12, 15, STONE); signs[Vector2i(12, 15)] = "Sign: Lookout Tower, up the stairs. Mind your step."
+	signs[Vector2i(33, 24)] = "The village well. Someone dropped a hairpin in it."
+	# --- NPCs ---
+	add_npc(Vector2i(29, 35), "Alera", "f5d0a9", "a0452e", "4f7a3a", [
 		"Alera: You stepped on Mrs. Pell's roses.",
 		"Alera: Mrs. Pell has been dead eleven years, and she is STILL going to be upset.",
 		"Alera: ...Kidding. Mostly. Welcome to the hedge, %s." % data.name])
-	add_npc(Vector2i(10, 20), "Old Tam", "c68e5d", "4a4a4a", "8a6a3a", [
+	add_npc(Vector2i(13, 31), "Old Tam", "c68e5d", "4a4a4a", "8a6a3a", [
 		"Old Tam: Look at that field. Gray as ash, and it was green yesterday.",
 		"Old Tam: Don't you go near Thornwild, you hear?"])
-	add_npc(Vector2i(36, 15), "Kid", "f9dcc4", "d9a441", "c27c2c", ["Kid: Bet you can't catch me! ...You didn't even try."])
+	add_npc(Vector2i(34, 25), "Kid", "f9dcc4", "d9a441", "c27c2c", ["Kid: Bet you can't catch me! ...You didn't even try."])
+	add_npc(Vector2i(13, 7), "Guard Lyle", "e0b48a", "6b3e26", "4a5f7a", ["Guard Lyle: Best view in Hearthvale. Worst wind, too."])
+	add_npc(Vector2i(46, 18), "Fisher Nan", "c68642", "d8d8d8", "3c78b5", ["Fisher Nan: Stream's been quiet. Fish don't like whatever's coming."])
+	# --- scatter trees, bushes, flowers (never next to paths/doors) ---
+	for y in range(2, mh - 2):
+		for x in range(2, mw - 2):
+			var t: int = g[y][x]
+			if not (t == GRASS or t == HIGH) or npcs.has(Vector2i(x, y)): continue
+			var near := false
+			for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var q: Vector2i = Vector2i(x, y) + dd
+				if g[q.y][q.x] in [PATH, DOOR, BRIDGE, STAIRS] or npcs.has(q): near = true
+			var r := rng.randf()
+			if near:
+				if r < 0.08 and t == GRASS: g[y][x] = FLOWER
+				continue
+			if r < 0.07: g[y][x] = TREE
+			elif r < 0.11: g[y][x] = BUSH
+			elif r < 0.16 and t == GRASS: g[y][x] = FLOWER
 
 func build_interior(id: String) -> void:
 	var it = INTERIORS[id]
@@ -199,7 +269,9 @@ func _draw() -> void:
 			var p := Vector2(x * T, y * T)
 			var t: int = g[y][x]
 			if not interior:
-				draw_rect(Rect2(p, Vector2(T, T)), Color("5e9e4a") if (x + y) % 2 == 0 else Color("5a9846"))
+				var hi := x <= 18 and y <= 13
+				var gc := Color("74b35a") if hi else Color("5e9e4a")
+				draw_rect(Rect2(p, Vector2(T, T)), gc if (x + y) % 2 == 0 else gc.darkened(0.03))
 			match t:
 				GRASS:
 					if rng.randf() < 0.3: draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(1, 2)), Color("4b843a"))
@@ -237,6 +309,33 @@ func _draw() -> void:
 				CROP:
 					draw_rect(Rect2(p, Vector2(T, T)), Color("6e5a46"))
 					for i in 2: draw_rect(Rect2(p + Vector2(3 + i * 7, 4), Vector2(2, 8)), Color("9a9a90"))
+				CLIFF:
+					var top: bool = y - 1 >= 0 and g[y - 1][x] != CLIFF
+					draw_rect(Rect2(p, Vector2(T, T)), Color("8a7258"))
+					for i in 3: draw_line(p + Vector2(rng.randi_range(1, 14), rng.randi_range(2, 13)), p + Vector2(rng.randi_range(1, 14), rng.randi_range(2, 13)), Color("6a5440"))
+					if top: draw_rect(Rect2(p, Vector2(T, 3)), Color("4f8a3a"))
+					draw_rect(Rect2(p + Vector2(0, 14), Vector2(T, 2)), Color("5a4430"))
+				STAIRS:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("a89070"))
+					for i in 4: draw_rect(Rect2(p + Vector2(0, i * 4), Vector2(T, 1)), Color("6a5440"))
+				BRIDGE:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("3c78b5"))
+					draw_rect(Rect2(p + Vector2(0, 1), Vector2(T, 14)), Color("9a6a3a"))
+					for i in 4: draw_line(p + Vector2(i * 4, 1), p + Vector2(i * 4, 15), Color("6b4a2a"))
+				BUSH:
+					draw_circle(p + Vector2(8, 10), 6, Color("3a7a34")); draw_circle(p + Vector2(5, 8), 3, Color("4c9444"))
+					if rng.randf() < 0.4: draw_circle(p + Vector2(10, 9), 1.5, Color("f0f0f0"))
+				LAMP:
+					draw_rect(Rect2(p + Vector2(7, 4), Vector2(2, 12)), Color("3a3a42"))
+					draw_rect(Rect2(p + Vector2(5, 1), Vector2(6, 5)), Color("2a2a32")); draw_rect(Rect2(p + Vector2(6, 2), Vector2(4, 3)), Color("f4d070"))
+				BENCH:
+					draw_rect(Rect2(p + Vector2(1, 7), Vector2(14, 3)), Color("9a6a3a")); draw_rect(Rect2(p + Vector2(1, 4), Vector2(14, 2)), Color("7a4a2a"))
+					draw_rect(Rect2(p + Vector2(2, 10), Vector2(2, 4)), Color("5a3a2a")); draw_rect(Rect2(p + Vector2(12, 10), Vector2(2, 4)), Color("5a3a2a"))
+				CRATE:
+					draw_rect(Rect2(p + Vector2(2, 3), Vector2(12, 12)), Color("a07a4a")); draw_rect(Rect2(p + Vector2(2, 3), Vector2(12, 12)), Color("6b4a2a"), false, 1)
+					draw_line(p + Vector2(2, 3), p + Vector2(14, 15), Color("6b4a2a"))
+				BARREL:
+					draw_rect(Rect2(p + Vector2(3, 2), Vector2(10, 13)), Color("8a5a34")); draw_rect(Rect2(p + Vector2(3, 5), Vector2(10, 1)), Color("4a4a52")); draw_rect(Rect2(p + Vector2(3, 11), Vector2(10, 1)), Color("4a4a52"))
 				WELL:
 					draw_circle(p + Vector2(8, 8), 7, Color("7a7a82")); draw_circle(p + Vector2(8, 8), 4, Color("1e3550"))
 				FLOOR, FURN:
@@ -273,6 +372,14 @@ func draw_building_details(font: Font) -> void:
 				for a in 4:
 					var v := Vector2.from_angle(PI / 4 + a * PI / 2)
 					draw_line(c, c + v * 22, Color("5a4a3a"), 3); draw_rect(Rect2(c + v * 14 - Vector2(4, 4), Vector2(8, 8)), Color("e8e0d0"))
+				draw_circle(o + Vector2(-6, hpx), 10, Color("6b4a2a")); draw_circle(o + Vector2(-6, hpx), 6, Color("3c78b5"))
+				for a2 in 6: draw_line(o + Vector2(-6, hpx), o + Vector2(-6, hpx) + Vector2.from_angle(a2 * PI / 3) * 10, Color("4a3a2a"), 2)
+			"tower":
+				draw_rect(Rect2(o + Vector2(-2, -18), Vector2(wpx + 4, 20)), Color("8a8a92"))
+				for i in 4: draw_rect(Rect2(o + Vector2(-2 + i * 14, -24), Vector2(8, 6)), Color("8a8a92"))
+				draw_rect(Rect2(o + Vector2(wpx / 2 - 2, -12), Vector2(4, 6)), Color("1e1e26"))
+				draw_line(o + Vector2(wpx / 2, -24), o + Vector2(wpx / 2, -40), Color("5b3b22"), 2)
+				draw_rect(Rect2(o + Vector2(wpx / 2, -40), Vector2(10, 6)), Color("c8283e"))
 			"barn":
 				draw_line(o + Vector2(0, 0), o + Vector2(wpx, hpx), Color("f0e0d0"), 2); draw_line(o + Vector2(wpx, 0), o + Vector2(0, hpx), Color("f0e0d0"), 2)
 			"alera":

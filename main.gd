@@ -274,11 +274,27 @@ func run_shot() -> void:
 	await snap(shot + "-creator.png")
 	confirm()
 	await get_tree().create_timer(0.3).timeout
-	village.load_map("village", Vector2i(28, 18)); village.cam.zoom = Vector2(1, 1)
+	village.load_map("village", Vector2i(30, 20)); village.cam.zoom = Vector2(0.55, 0.55)
+	village.cam.limit_left = -10000; village.cam.limit_right = 10000; village.cam.limit_top = -10000; village.cam.limit_bottom = 10000
+	village.cam.position_smoothing_enabled = false
 	await get_tree().create_timer(1.0).timeout
 	await snap(shot + "-town.png")
+	village.cam.position_smoothing_enabled = true
 	village.cam.zoom = Vector2(2, 2)
-	village.load_map("village", Vector2i(28, 30)); village.player.facing = Vector2i(0, 1)
+	# walk up the cliff stairs for real: start below stairs at (10,16), hold up
+	village.load_map("village", Vector2i(10, 16)); village.player.facing = Vector2i(0, -1)
+	var up := InputEventKey.new(); up.keycode = KEY_UP; up.physical_keycode = KEY_UP; up.pressed = true; Input.parse_input_event(up)
+	await get_tree().create_timer(1.0).timeout
+	up = InputEventKey.new(); up.keycode = KEY_UP; up.physical_keycode = KEY_UP; up.pressed = false; Input.parse_input_event(up)
+	await get_tree().create_timer(0.8).timeout
+	print("CLIFF cell=", village.cell)
+	village.cam.zoom = Vector2(1.2, 1.2)
+	await get_tree().create_timer(0.8).timeout
+	await snap(shot + "-cliff.png")
+	village.cam.zoom = Vector2(2, 2)
+	# old-save safety: wall position
+	village.load_map("village", Vector2i(22, 11)); print("SAFE from wall -> ", village.cell)
+	village.load_map("village", Vector2i(29, 34)); village.player.facing = Vector2i(0, 1)
 	await get_tree().create_timer(1.0).timeout
 	await snap(shot + "-village.png")
 	village.interact()
@@ -286,7 +302,7 @@ func run_shot() -> void:
 	await snap(shot + "-talk.png")
 	village.interact(); village.interact(); village.interact()
 	# walk into the inn door via real movement
-	village.load_map("village", Vector2i(46, 11)); village.player.facing = Vector2i(0, -1)
+	village.load_map("village", Vector2i(25, 30)); village.player.facing = Vector2i(0, -1)
 	Input.action_press("ui_up")
 	var ev := InputEventKey.new(); ev.keycode = KEY_UP; ev.physical_keycode = KEY_UP; ev.pressed = true; Input.parse_input_event(ev)
 	await get_tree().create_timer(1.2).timeout
