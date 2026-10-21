@@ -5,9 +5,13 @@ signal save_requested(d)
 signal encounter(foes, biome)
 const T := 16
 enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN, HIGH, CLIFF, STAIRS, BUSH, LAMP, BENCH, CRATE, BARREL, BRIDGE,
-	SAND, ROCK, CAVEWALL, PINE, REED, PEBBLE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP}
-const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL, ROCK, CAVEWALL, PINE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP]
+	SAND, ROCK, CAVEWALL, PINE, REED, PEBBLE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP,
+	THORN, BIGTREE, DOCK, WRECK, STATUE, SWALL, SFLOOR, RAIL, ICE, LEVER, LEVER_ON, GATE, GATE_OPEN, MUDBOARD}
+const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL, ROCK, CAVEWALL, PINE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP, THORN, BIGTREE, WRECK, STATUE, SWALL, LEVER, LEVER_ON, GATE]
 const TILE_NAMES := {"TREE": TREE, "ROCK": ROCK, "CAVEWALL": CAVEWALL, "PINE": PINE, "RUIN": RUIN, "PILLAR": PILLAR, "FLOWER": FLOWER, "BUSH": BUSH, "REED": REED, "PEBBLE": PEBBLE}
+const LEGEND := {".": GRASS, ",": PATH, "e": PATH, "T": TREE, "P": PINE, "R": ROCK, "#": CAVEWALL, "W": WATER, "=": BRIDGE, "S": SAND, "C": CLIFF, "^": STAIRS,
+	"b": BUSH, "f": FLOWER, "r": REED, "p": PEBBLE, "U": RUIN, "I": PILLAR, "H": HEDGE, "K": FENCE, "l": LAMP, "k": CRATE, "o": BARREL, "q": BENCH, "w": WELL,
+	"x": THORN, "Y": BIGTREE, "D": DOCK, "V": WRECK, "A": STATUE, "Z": SWALL, "+": SFLOOR, "_": RAIL, "i": ICE, "L": LEVER, "G": GATE, "m": MUDBOARD, "c": CROP}
 const PATH_COL := {"cave": Color("6a5e52"), "dungeon": Color("5a5266"), "snow": Color("c4c8d0"), "snowtown": Color("c4c8d0"), "marsh": Color("8a6a4a"), "wastes": Color("6a6070"), "ruins": Color("b8ae94")}
 const SAFE_SPAWN := Vector2i(24, 18)
 const INWARD := {"N": Vector2i(0, 1), "S": Vector2i(0, -1), "W": Vector2i(1, 0), "E": Vector2i(-1, 0)}
@@ -54,6 +58,13 @@ const INTERIORS := {
 		[[4,1,"Watchman Corin","e0ac69","3a3a5a","4a5f7a","Corin: Climb up for the view sometime. From here you can see the hedge, the mill, and, lately, gray creeping in from Thornwild."]]],
 	"barn": [11, 9, "7a6a3a", [[1,1,2,2,"d9c060","hay"],[1,3,2,1,"d9c060","hay"],[6,1,1,3,"6b4a2a","stall"],[9,1,1,3,"6b4a2a","stall"]],
 		[[8,2,"Buttercup","f0f0f0","3a3a3a","f0f0f0","Buttercup the cow: Moo. (She seems worried about the crops too.)"]]],
+	# ---- signature interiors (other towns) ----
+	"grove_lodge": [15, 11, "6a5a3a", [[6,4,3,2,"d0602a","firepit"],[0,0,3,3,"5a4430","great root"],[12,0,3,3,"5a4430","great root"],[1,8,3,1,"a08a6a","pelts"],[11,8,3,1,"a08a6a","pelts"],[6,0,3,1,"8a8a6a","antler throne"],[0,5,1,2,"4a7a3a","moss"],[14,5,1,2,"7a7a7a","graying moss"]], [[7,2]]],
+	"vm_church": [15, 13, "b8b0c0", [[6,0,3,1,"f0e0a0","great lantern"],[5,2,5,1,"e8d890","altar"],[1,5,4,1,"6a4a3a","pew"],[10,5,4,1,"6a4a3a","pew"],[1,7,4,1,"6a4a3a","pew"],[10,7,4,1,"6a4a3a","pew"],[1,9,4,1,"6a4a3a","pew"],[10,9,4,1,"6a4a3a","pew"],[0,1,1,1,"f0d060","dim lantern"],[14,1,1,1,"f0d060","dim lantern"],[0,11,1,1,"f0d060","dim lantern"],[14,11,1,1,"f0d060","dim lantern"]], [[7,3]]],
+	"vm_archive": [15, 11, "7a6a5a", [[0,0,15,1,"5a3a2a","bookshelves"],[0,2,1,7,"5a3a2a","bookshelves"],[14,2,1,7,"5a3a2a","bookshelves"],[3,3,2,4,"5a3a2a","stacks"],[10,3,2,4,"5a3a2a","stacks"],[6,4,3,2,"9a7a4a","reading desk"],[7,8,1,1,"6a8ab0","orrery"]], [[7,6]]],
+	"vm_watch": [13, 11, "6a6a6a", [[1,1,5,1,"6b4a2a","bar"],[8,0,4,1,"8a8a92","weapon rack"],[8,2,3,2,"9a6a3a","map table"],[0,5,1,3,"3a3a42","cell bars"],[12,5,1,3,"3a3a42","cell bars"],[2,6,2,2,"9a6a3a","table"],[5,8,1,1,"b0915a","barrel"],[6,8,1,1,"b0915a","barrel"]], [[3,2]]],
+	"shrine_in": [11, 11, "8a8a9a", [[4,0,3,1,"e8e8ec","shrine stone"],[1,3,1,1,"7a7a80","grave marker"],[3,3,1,1,"7a7a80","grave marker"],[7,3,1,1,"7a7a80","grave marker"],[9,3,1,1,"7a7a80","grave marker"],[1,6,1,1,"7a7a80","grave marker"],[9,6,1,1,"7a7a80","grave marker"],[5,6,1,1,"f0d060","candles"]], [[5,2]]],
+	"frost_hall": [13, 9, "8a9aa8", [[0,0,13,1,"5a6a7a","shield wall"],[3,3,7,2,"6a5a4a","war table"],[0,4,1,2,"d0602a","brazier"],[12,4,1,2,"d0602a","brazier"],[1,7,3,1,"c8d8e8","furs"],[9,7,3,1,"c8d8e8","furs"]], [[6,2]]],
 }
 
 
@@ -131,7 +142,8 @@ func load_map(id: String, spec: Dictionary) -> void:
 	elif id == "rosewood":
 		biome = "village"; ground = Color("5e9e4a"); build_rosewood()
 	else:
-		gen_map(id)
+		if FileAccess.file_exists("res://maps/%s.txt" % id): load_authored(id)
+		else: gen_map(id)
 	# drop exits to maps not in this release
 	for c in exits.keys():
 		if not map_exists(exits[c][0]): exits.erase(c)
@@ -470,6 +482,67 @@ func gen_map(id: String) -> void:
 						g[spot.y][spot.x] = STONE; signs[spot] = "The place where %s fell." % d.boss[1]
 			break
 
+func load_authored(id: String) -> void:
+	var d: Dictionary = D.WORLD[id]
+	biome = d.biome
+	ground = Color(D.BIOMES[biome].ground)
+	var j: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://maps/%s.txt" % id))
+	var rows: Array = j.rows
+	var h := rows.size(); var w: int = String(rows[0]).length()
+	new_grid(w, h, GRASS)
+	var lev_on: bool = ("lever:" + id) in data.flags
+	for y in h:
+		var row: String = rows[y]
+		for x in w:
+			var ch := row[x]
+			var t: int = LEGEND.get(ch, GRASS)
+			if ch == "G" and lev_on: t = GATE_OPEN
+			if ch == "L" and lev_on: t = LEVER_ON
+			g[y][x] = t
+			if ch == "e":
+				var side := "W" if x == 0 else ("E" if x == w - 1 else ("N" if y == 0 else "S"))
+				if d.links.has(side): exits[Vector2i(x, y)] = [d.links[side], side]
+	hub = Vector2i(int(j.hub[0]), int(j.hub[1]))
+	var bdefs := {}
+	for b in d.get("buildings", []): bdefs[b[0]] = b
+	for bid in j.get("buildings", {}):
+		if not bdefs.has(bid): continue
+		var r: Array = j.buildings[bid]
+		var bd: Array = bdefs[bid]
+		var look = TYPE_LOOK[bd[2]]
+		var x: int = int(r[0]); var y: int = int(r[1]); var bw: int = int(r[2]); var bh: int = int(r[3])
+		buildings[bid] = [bd[1], x, y, bw, bh, look[0], look[1], bd[2]]
+		binfo[bid] = bd
+		rect(x, y, bw, bh - 1, ROOF); rect(x, y + bh - 1, bw, 1, WALL)
+		for yy in range(y, y + bh):
+			for xx in range(x, x + bw): bcell[Vector2i(xx, yy)] = bid
+		g[y + bh - 1][x + bw / 2] = DOOR
+	var pi := 0
+	for s in j.get("signs", []):
+		var c := Vector2i(int(s[0]), int(s[1])); g[c.y][c.x] = STONE; signs[c] = "Sign: " + s[2]
+	for n in j.get("npcs", []):
+		pi += 1
+		var c := Vector2i(int(n[0]), int(n[1]))
+		var cols := ["f1c27d", "c68642", "e0ac69", "f9dcc4"]
+		add_npc(c, n[2], cols[pi % 4], ["6b3e26", "2b1b12", "d8d8d8", "a0452e"][pi % 4], ["7a6a4a", "3a6ea5", "6a4c7a", "8a3a3a"][pi % 4], [n[3]], n[4] if n.size() > 4 else "")
+	for ch in j.get("chests", []):
+		var c := Vector2i(int(ch[0]), int(ch[1]))
+		var key := "%s:%d,%d" % [id, c.x, c.y]
+		g[c.y][c.x] = CHEST_OPEN if key in data.opened else CHEST
+		chests[c] = ch[2]
+	for cp in j.get("camps", []):
+		var c := Vector2i(int(cp[0]), int(cp[1])); g[c.y][c.x] = CAMP; camps[c] = true
+	for s in j.get("notes", []):
+		signs[Vector2i(int(s[0]), int(s[1]))] = s[2]
+	if j.has("boss") and d.has("boss"):
+		var c := Vector2i(int(j.boss[0]), int(j.boss[1]))
+		if not ("boss:" + id) in data.flags:
+			var e = D.ENEMIES[d.boss[0]]
+			add_npc(c, d.boss[1], e[2], "1a1a1a", e[2], [d.boss[2], "%s attacks!" % d.boss[1]], "boss")
+			boss_cell = c
+		else:
+			g[c.y][c.x] = STONE; signs[c] = "The place where %s fell." % d.boss[1]
+
 func near_path(c: Vector2i) -> bool:
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
@@ -553,7 +626,7 @@ func build_interior(id: String) -> void:
 		var bd: Array = []
 		for b in D.WORLD[parts[0]].buildings:
 			if b[0] == parts[1]: bd = b
-		it = INTERIORS[bd[2]]
+		it = INTERIORS[bd[6]] if bd.size() > 6 and INTERIORS.has(bd[6]) else INTERIORS[bd[2]]
 		var pos = it[4][0] if it[4].size() > 0 else [it[0] / 2, 2]
 		npcdefs = [[pos[0], pos[1], bd[3], "e0b48a", "4a3a2a", TYPE_LOOK[bd[2]][0], bd[4], bd[5]]]
 	var w: int = it[0] + 2; var h: int = it[1] + 3
@@ -626,6 +699,53 @@ func _draw() -> void:
 						draw_rect(Rect2(p + Vector2(2, 4), Vector2(12, 4)), Color("b8823a")); draw_rect(Rect2(p + Vector2(7, 7), Vector2(2, 3)), Color("f0d060"))
 					else:
 						draw_rect(Rect2(p + Vector2(3, 6), Vector2(10, 4)), Color("1a1008")); draw_rect(Rect2(p + Vector2(2, 1), Vector2(12, 3)), Color("b8823a"))
+				THORN:
+					draw_rect(Rect2(p + Vector2(1, 3), Vector2(14, 13)), Color("3a3a24"))
+					for i in 5:
+						var a := p + Vector2(rng.randi_range(1, 14), rng.randi_range(3, 15))
+						draw_line(a, a + Vector2(rng.randi_range(-4, 4), -4), Color("6a5a3a"), 1)
+					draw_circle(p + Vector2(rng.randi_range(4, 12), rng.randi_range(5, 12)), 1.5, Color("7a2a3a"))
+				BIGTREE:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("4a3422"))
+					draw_line(p + Vector2(rng.randi_range(2, 6), 0), p + Vector2(rng.randi_range(2, 6), 16), Color("3a2616"), 2)
+					draw_line(p + Vector2(rng.randi_range(9, 14), 0), p + Vector2(rng.randi_range(9, 14), 16), Color("5a4430"), 1)
+					if (x + y) % 3 == 0: draw_circle(p + Vector2(8, 4), 5, Color("2f5a2a") if map_id != "gorran_grove" or x > mw / 2 else Color("8a8a80"))
+				DOCK, MUDBOARD:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("3c78b5") if t == DOCK else Color("4a5a3a"))
+					var pc := Color("9a7448") if t == DOCK else Color("6a5434")
+					for i in 4:
+						if t == MUDBOARD and (x * 7 + y * 3 + i) % 5 == 0: continue
+						draw_rect(Rect2(p + Vector2(0, i * 4), Vector2(T, 3)), pc)
+				WRECK:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("3c78b5"))
+					draw_rect(Rect2(p + Vector2(1, 2), Vector2(14, 12)), Color("5a3e26")); draw_line(p + Vector2(1, 6), p + Vector2(15, 6), Color("3a2616")); draw_line(p + Vector2(1, 10), p + Vector2(15, 10), Color("3a2616"))
+				STATUE:
+					draw_rect(Rect2(p + Vector2(3, 12), Vector2(10, 4)), Color("6a6a70")); draw_rect(Rect2(p + Vector2(5, 4), Vector2(6, 9)), Color("9a9aa4")); draw_circle(p + Vector2(8, 3), 3, Color("9a9aa4"))
+				SWALL:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("6a6470")); draw_rect(Rect2(p, Vector2(T, 3)), Color("8a8494"))
+					var o1 := 8 if y % 2 == 0 else 3
+					draw_line(p + Vector2(0, 8), p + Vector2(T, 8), Color("54505c")); draw_line(p + Vector2(o1, 3), p + Vector2(o1, 8), Color("54505c")); draw_line(p + Vector2(15 - o1, 8), p + Vector2(15 - o1, 16), Color("54505c"))
+				SFLOOR:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("a8a49c") if biome != "dungeon" else Color("4e4658"))
+					draw_rect(Rect2(p, Vector2(T, T)), Color(0, 0, 0, 0.12), false, 1)
+				RAIL:
+					draw_rect(Rect2(p, Vector2(T, T)), PATH_COL.get(biome, Color("c9a86a")))
+					for i in 4: draw_rect(Rect2(p + Vector2(1, i * 4 + 1), Vector2(14, 2)), Color("5a4430"))
+					draw_line(p + Vector2(4, 0), p + Vector2(4, 16), Color("8a8a92"), 2); draw_line(p + Vector2(12, 0), p + Vector2(12, 16), Color("8a8a92"), 2)
+				ICE:
+					draw_rect(Rect2(p, Vector2(T, T)), Color("bcdcf0")); draw_line(p + Vector2(rng.randi_range(1, 8), rng.randi_range(1, 14)), p + Vector2(rng.randi_range(8, 15), rng.randi_range(1, 14)), Color("e8f6ff"))
+				LEVER, LEVER_ON:
+					draw_rect(Rect2(p + Vector2(4, 11), Vector2(8, 4)), Color("4a4a52"))
+					var tip := Vector2(3, 3) if t == LEVER else Vector2(13, 3)
+					draw_line(p + Vector2(8, 12), p + tip, Color("8a6a3a"), 2)
+					draw_circle(p + tip, 2, Color("d04040") if t == LEVER else Color("40d060"))
+				GATE, GATE_OPEN:
+					if t == GATE:
+						draw_rect(Rect2(p, Vector2(T, T)), Color("2a2a32"))
+						for i in 4: draw_rect(Rect2(p + Vector2(1 + i * 4, 0), Vector2(2, T)), Color("8a8a96"))
+						draw_rect(Rect2(p + Vector2(0, 6), Vector2(T, 2)), Color("8a8a96"))
+					else:
+						draw_rect(Rect2(p, Vector2(T, 2)), Color("8a8a96"))
 				CAMP:
 					for i in 4: draw_line(p + Vector2(2 + i * 3, 15), p + Vector2(14 - i * 3, 11), Color("5b3b22"), 2)
 					draw_circle(p + Vector2(8, 9), 4, Color("e8702a")); draw_circle(p + Vector2(8, 10), 2, Color("f8d860"))
@@ -879,6 +999,15 @@ func interact() -> void:
 		say(["Empty."])
 	elif camps.has(c):
 		say(["You rest by the campfire. HP and MP restored. (Press F5 to save.)"], func(): heal_full())
+	elif g[c.y][c.x] == LEVER:
+		data.flags.append("lever:" + map_id)
+		g[c.y][c.x] = LEVER_ON
+		for y in mh:
+			for x in mw:
+				if g[y][x] == GATE: g[y][x] = GATE_OPEN
+		queue_redraw(); say(["*Clunk.* Somewhere, a gate grinds open."])
+	elif g[c.y][c.x] == LEVER_ON: say(["The lever is already pulled."])
+	elif g[c.y][c.x] == GATE: say(["A heavy iron gate. There must be a lever somewhere."])
 	elif signs.has(c): say([signs[c]])
 	elif g[c.y][c.x] == HEDGE: say(["Wild roses. Somebody takes very good care of these."])
 
@@ -955,7 +1084,7 @@ func check_reach() -> Array:
 		for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 			var n: Vector2i = c + dd
 			if seen.has(n) or n.x < 0 or n.y < 0 or n.x >= mw or n.y >= mh: continue
-			if g[n.y][n.x] in SOLID and not npcs.has(n): continue
+			if g[n.y][n.x] in SOLID and g[n.y][n.x] != GATE and not npcs.has(n): continue
 			if npcs.has(n): continue
 			seen[n] = true; q.append(n)
 	var bad := []
