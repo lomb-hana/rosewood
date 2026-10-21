@@ -16,11 +16,12 @@ async def main():
             s = await pg.evaluate("JSON.stringify(window.rwT || null)"); return json.loads(s) if s else None
         async def cell_click(s, c): await click(s["org"][0] + c[0] * s["ts"] + 12, s["org"][1] + c[1] * s["ts"] + 12)
         async def button(s, prefix):
+            print("  click", prefix, [b["text"][:10] for b in s["buttons"]], flush=True)
             for bt in s["buttons"]:
                 if bt["text"].startswith(prefix) and not bt.get("disabled"): await click(bt["x"], bt["y"]); return True
             return False
-        used_keys = False; shots = 0; turns = 0
-        for step in range(900):
+        used_keys = False; shots = 0; turns = 0; stuck = {}
+        for step in range(int(sys.argv[3]) if len(sys.argv) > 3 else 900):
             await pg.wait_for_timeout(300)
             s = await st()
             if not s: continue
@@ -29,6 +30,7 @@ async def main():
                 await pg.screenshot(path=OUT + "-result.png")
                 await button(s, "Continue"); await pg.wait_for_timeout(1500)
                 await pg.screenshot(path=OUT + "-after.png"); break
+            if step % 5 == 0: print(step, s["mode"], s["msg"][:60], [ (u["name"],u["hp"]) for u in s["units"] if u["active"]], flush=True)
             if s["mode"] not in ("menu", "move", "target"): continue
             act = next((u for u in s["units"] if u["active"]), None)
             if not act or act["side"] != "p": continue
@@ -41,8 +43,10 @@ async def main():
                 hurt = [u for u in allies if u["hp"] < u["maxhp"] * 0.55]
                 if "Move and act" in s["msg"] and act["cls"] == "Cleric" and hurt and act["mp"] >= 5:
                     await button(s, "Skills"); await pg.wait_for_timeout(300); s = await st(); await button(s, "Mend")
-                elif "Move and act" in s["msg"] or ("Move or end" in s["msg"] and False):
-                    turns += 1
+                elif "Move and act" in s["msg"] and stuck.get(act["name"] + str(turns), 0) >= 2:
+                    await button(s, "End turn"); turns += 1
+                elif "Move and act" in s["msg"]:
+                    stuck[act["name"] + str(turns)] = stuck.get(act["name"] + str(turns), 0) + 1
                     if not used_keys:
                         await pg.keyboard.press("Enter")       # focused "Move" button
                     else:
@@ -51,8 +55,9 @@ async def main():
                     if act["cls"] == "Cleric" and hurt and act["mp"] >= 5:
                         await button(s, "Skills"); await pg.wait_for_timeout(300); s = await st(); await button(s, "Mend")
                     else: await button(s, "Attack")
-                    await pg.wait_for_timeout(1200); s = await st()
-                    if s and s["mode"] == "menu" and "Attack" not in s["msg"]: await button(s, "End turn")
+                    await pg.wait_for_timeout(1300); s = await st()
+                    if s and s["mode"] == "menu" and "Act or end" in s["msg"]: await button(s, "End turn")
+                    turns += 1
                 else:
                     await button(s, "End turn")
             elif s["mode"] == "move":
@@ -68,6 +73,8 @@ async def main():
                 if best == me or score(best) >= score(me):
                     await pg.keyboard.press("Escape"); await pg.wait_for_timeout(400); s = await st()
                     if s and s["mode"] == "menu": await button(s, "Attack")
+                    await pg.wait_for_timeout(1200); s = await st()
+                    if s and s["mode"] == "menu": await button(s, "End turn"); turns += 1
                     continue
                 if not used_keys:
                     used_keys = True
@@ -85,6 +92,7 @@ async def main():
                     tg = min([u for u in allies if (u["x"], u["y"]) in cells], key=lambda u: u["hp"] / u["maxhp"], default=None)
                 else:
                     tg = min([f for f in foes if (f["x"], f["y"]) in cells], key=lambda f: f["hp"], default=None)
+                print("  target", s["msg"][:30], cells, tg and tg["name"], flush=True)
                 if tg: await cell_click(s, (tg["x"], tg["y"]))
                 else: await pg.keyboard.press("Escape")
                 await pg.wait_for_timeout(900)

@@ -327,6 +327,7 @@ func snap(path: String) -> void:
 
 func run_shot() -> void:
 	if OS.get_environment("TACTICS_TEST") != "": await tactics_test(); return
+	if OS.get_environment("WALK_TEST") != "": await walk_test(); return
 	await get_tree().create_timer(0.5).timeout
 	await snap(shot + "-title.png")
 	sel.hair = 2; sel.outfit = 2; sel.cls = 3
@@ -410,7 +411,7 @@ func tactics_test() -> void:
 			if won: await get_tree().create_timer(0.5).timeout; print("PATROL GONE ", village.patrol_cell, " flags=", village.data.flags)
 			get_tree().quit(); return
 		var u = battle.active
-		if Engine.get_process_frames() % 120 == 0: print("STATE ", battle.mode, " | ", battle.msg.text)
+		if battle.msg.text != did.get("lastmsg", ""): did.lastmsg = battle.msg.text; print("MSG ", battle.msg.text, " | ", battle.preview.text.replace("\n", " "))
 		if u == null or u.side != "p": continue
 		if last_turn == null or last_turn.uid != u.uid or did.get("t", -1.0) != u.t: did = {"t": u.t}; last_turn = u
 		if battle.mode == "menu":
@@ -440,4 +441,29 @@ func tactics_test() -> void:
 			if not b0.disabled: b0.pressed.emit()
 			else: battle.picked.emit(["back"])
 	print("TEST DONE flags=", village.data.flags)
+	get_tree().quit()
+
+func walk_test() -> void:
+	var d := {"name": "Tester", "cls": "Knight", "skin": SKINS[1], "hair": HAIRS[1], "outfit": OUTFITS[0], "map": "thornwild_edge"}
+	D.ensure(d); slot = 99; start_village(d)
+	village.save_requested.disconnect(village.save_requested.get_connections()[0].callable)
+	await get_tree().create_timer(0.8).timeout
+	print("start cell ", village.cell, " patrol ", village.patrol_cell)
+	for i in 40:
+		if battle: break
+		var key := KEY_DOWN if village.cell.y < 23 else KEY_LEFT
+		var before: Vector2i = village.cell
+		var ev := InputEventKey.new(); ev.keycode = key; ev.physical_keycode = key; ev.pressed = true; Input.parse_input_event(ev)
+		await get_tree().create_timer(0.12).timeout
+		ev = ev.duplicate(); ev.pressed = false; Input.parse_input_event(ev)
+		await get_tree().create_timer(0.3).timeout
+		if village.cell == before and key == KEY_DOWN:
+			ev = InputEventKey.new(); ev.keycode = KEY_LEFT; ev.physical_keycode = KEY_LEFT; ev.pressed = true; Input.parse_input_event(ev)
+			await get_tree().create_timer(0.12).timeout
+			ev = ev.duplicate(); ev.pressed = false; Input.parse_input_event(ev)
+			await get_tree().create_timer(0.3).timeout
+		print("cell ", village.cell, " patrol ", village.patrol_cell, " battle ", battle != null)
+	await get_tree().create_timer(1.5).timeout
+	print("WALK battle=", battle != null, " tactical=", tactical)
+	await snap(shot + "-walk.png")
 	get_tree().quit()
