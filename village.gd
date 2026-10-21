@@ -303,7 +303,7 @@ func build_ui() -> void:
 
 func say(lines: Array) -> void:
 	talk_lines = lines; talk_i = 0
-	dialog_label.text = lines[0] + "  ▼"; dialog.visible = true
+	dialog_label.text = lines[0] + "  >>"; dialog.visible = true
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and not e.echo:
@@ -322,7 +322,7 @@ func interact() -> void:
 	if dialog.visible:
 		talk_i += 1
 		if talk_i >= talk_lines.size(): dialog.visible = false
-		else: dialog_label.text = talk_lines[talk_i] + "  ▼"
+		else: dialog_label.text = talk_lines[talk_i] + "  >>"
 		return
 	var c: Vector2i = cell + player.facing
 	if c.x < 0 or c.y < 0 or c.x >= mw or c.y >= mh: return
