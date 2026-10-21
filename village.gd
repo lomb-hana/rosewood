@@ -8,6 +8,7 @@ enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, C
 	SAND, ROCK, CAVEWALL, PINE, REED, PEBBLE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP}
 const SOLID := [TREE, WALL, ROOF, HEDGE, WATER, FENCE, STONE, WELL, IWALL, FURN, CLIFF, BUSH, LAMP, BENCH, CRATE, BARREL, ROCK, CAVEWALL, PINE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP]
 const TILE_NAMES := {"TREE": TREE, "ROCK": ROCK, "CAVEWALL": CAVEWALL, "PINE": PINE, "RUIN": RUIN, "PILLAR": PILLAR, "FLOWER": FLOWER, "BUSH": BUSH, "REED": REED, "PEBBLE": PEBBLE}
+const PATH_COL := {"cave": Color("6a5e52"), "dungeon": Color("5a5266"), "snow": Color("c4c8d0"), "snowtown": Color("c4c8d0"), "marsh": Color("8a6a4a"), "wastes": Color("6a6070"), "ruins": Color("b8ae94")}
 const SAFE_SPAWN := Vector2i(24, 18)
 const INWARD := {"N": Vector2i(0, 1), "S": Vector2i(0, -1), "W": Vector2i(1, 0), "E": Vector2i(-1, 0)}
 const OPP := {"N": "S", "S": "N", "E": "W", "W": "E"}
@@ -380,8 +381,11 @@ func gen_map(id: String) -> void:
 			exits[e + along * k] = [d.links[side], side]
 			for j in 4: carve1(e + along * k + inw * j)
 		walk(e + inw * 3, hub, rng)
-	if biome in ["town", "dungeon"]:
+	if biome in ["town", "snowtown", "dungeon"]:
 		rect(hub.x - 3, hub.y - 2, 8, 5, PATH)
+	if biome in ["town", "snowtown"]:
+		for q in [Vector2i(w / 5, h / 4), Vector2i(4 * w / 5 - 2, h / 4), Vector2i(w / 5, 3 * h / 4 - 2), Vector2i(4 * w / 5 - 2, 3 * h / 4 - 2)]:
+			walk(hub, q + Vector2i(rng.randi_range(-2, 2), rng.randi_range(-2, 2)), rng)
 	# buildings (towns)
 	if d.has("buildings"):
 		for bd in d.buildings: place_building(bd, rng)
@@ -474,11 +478,43 @@ func near_path(c: Vector2i) -> bool:
 			if g[q.y][q.x] in [PATH, DOOR, BRIDGE, STAIRS] or exits.has(q) or npcs.has(q): return true
 	return false
 
+func bfs_to_path(start: Vector2i, avoid: Rect2i) -> Array:
+	var prev := {start: start}
+	var q := [start]
+	var qi := 0
+	while qi < q.size() and qi < 600:
+		var c: Vector2i = q[qi]; qi += 1
+		if g[c.y][c.x] == PATH:
+			var out := []
+			var k: Vector2i = prev[c]
+			while k != start: out.append(k); k = prev[k]
+			out.append(start)
+			return out
+		for dd in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
+			var n: Vector2i = c + dd
+			if prev.has(n) or n.x < 3 or n.y < 3 or n.x >= mw - 3 or n.y >= mh - 3: continue
+			if avoid.has_point(n) or bcell.has(n): continue
+			if not g[n.y][n.x] in [GRASS, PATH, FLOWER]: continue
+			var nearb := false
+			for e in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				if bcell.has(n + e): nearb = true
+			if nearb and g[n.y][n.x] != PATH: continue
+			prev[n] = c; q.append(n)
+	return []
+
 func place_building(bd: Array, rng: RandomNumberGenerator) -> void:
 	var look = TYPE_LOOK[bd[2]]
 	var bw: int = look[2]; var bh: int = look[3]
-	for attempt in 600:
+	var pc := []
+	for yy in range(4, mh - 3):
+		for xx in range(4, mw - 4):
+			if g[yy][xx] == PATH: pc.append(Vector2i(xx, yy))
+	for attempt in 2500:
 		var x := rng.randi_range(3, mw - bw - 4); var y := rng.randi_range(3, mh - bh - 5)
+		if attempt < 800 and pc.size() > 0:
+			var pp: Vector2i = pc[rng.randi() % pc.size()]
+			x = pp.x - bw / 2; y = pp.y - bh - rng.randi_range(1, 3)
+			if x < 3 or y < 3 or x + bw > mw - 3: continue
 		var ok := true
 		for yy in range(y - 1, y + bh + 1):
 			for xx in range(x - 1, x + bw + 1):
@@ -492,7 +528,10 @@ func place_building(bd: Array, rng: RandomNumberGenerator) -> void:
 			if c.y >= mh - 2 or bcell.has(c) or g[c.y][c.x] in [WATER, CLIFF]: break
 			if g[c.y][c.x] == PATH: hit = true; break
 			line.append(c); c += Vector2i(0, 1)
-		if not hit: continue
+		if not hit:
+			if attempt < 800: continue
+			line = bfs_to_path(dc + Vector2i(0, 1), Rect2i(x, y, bw, bh))
+			if line.is_empty(): continue
 		for q in line: g[q.y][q.x] = PATH
 		buildings[bd[0]] = [bd[1], x, y, bw, bh, look[0], look[1], bd[2]]
 		binfo[bd[0]] = bd
@@ -594,8 +633,10 @@ func _draw() -> void:
 					for i in 3:
 						draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(2, 2)), [Color("e8506a"), Color("f4e06d"), Color("f0f0f0")][rng.randi() % 3])
 				PATH:
-					draw_rect(Rect2(p, Vector2(T, T)), Color("c9a86a"))
-					draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(2, 1)), Color("b0915a"))
+					var pcol: Color = PATH_COL.get(biome, Color("c9a86a"))
+					draw_rect(Rect2(p, Vector2(T, T)), pcol)
+					if biome == "marsh": draw_line(p + Vector2(0, 8), p + Vector2(T, 8), pcol.darkened(0.3))
+					draw_rect(Rect2(p + Vector2(rng.randi_range(2, 12), rng.randi_range(2, 12)), Vector2(2, 1)), pcol.darkened(0.15))
 				TREE:
 					draw_rect(Rect2(p + Vector2(6, 10), Vector2(4, 6)), Color("5b3b22"))
 					draw_circle(p + Vector2(8, 7), 7, Color("2f6b30")); draw_circle(p + Vector2(6, 5), 3, Color("3f8a3d"))
@@ -738,7 +779,7 @@ func base_map() -> String:
 
 func draw_world_map() -> void:
 	var c := wmap
-	c.draw_rect(Rect2(Vector2.ZERO, Vector2(640, 360)), Color(0.07, 0.06, 0.08, 0.94))
+	c.draw_rect(Rect2(Vector2.ZERO, Vector2(640, 360)), Color(0.07, 0.06, 0.08, 1.0))
 	var font := ThemeDB.fallback_font
 	var ids := []
 	for id in D.WORLD:
@@ -755,11 +796,11 @@ func draw_world_map() -> void:
 		for side in D.WORLD[id].links:
 			var o: String = D.WORLD[id].links[side]
 			if o in ids: c.draw_line(P.call(id), P.call(o), Color("8a7a5a"), 2)
-	var bcol := {"village": "e8b0c0", "town": "f0d080", "dungeon": "c04050", "plains": "8ac860", "forest": "3f8a3d", "river": "5aa0e0", "coast": "70c0d0", "marsh": "7a8a5a", "mountain": "a09a88", "cave": "6a5a50", "ruins": "b0a890", "snow": "e8f0ff", "wastes": "8a6aa0"}
+	var bcol := {"village": "e8b0c0", "town": "f0d080", "snowtown": "f0d080", "dungeon": "c04050", "plains": "8ac860", "forest": "3f8a3d", "river": "5aa0e0", "coast": "70c0d0", "marsh": "7a8a5a", "mountain": "a09a88", "cave": "6a5a50", "ruins": "b0a890", "snow": "e8f0ff", "wastes": "8a6aa0"}
 	for id in ids:
 		var w = D.WORLD[id]
 		var p: Vector2 = P.call(id)
-		var r := 7.0 if w.biome in ["town", "village", "dungeon"] else 5.0
+		var r := 7.0 if w.biome in ["town", "snowtown", "village", "dungeon"] else 5.0
 		if w.biome == "dungeon":
 			c.draw_rect(Rect2(p - Vector2(r, r), Vector2(r, r) * 2), Color(bcol[w.biome]))
 		else:
@@ -768,7 +809,10 @@ func draw_world_map() -> void:
 		var name: String = w.name
 		var fs := 8
 		var sz := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
-		c.draw_string(font, p + Vector2(-sz.x / 2, r + 10), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
+		var above: bool = (int(w.pos[0]) + 100) % 4 >= 2
+		var lp := p + Vector2(-sz.x / 2, (-r - 4) if above else (r + 10))
+		c.draw_rect(Rect2(lp + Vector2(-2, -8), sz + Vector2(4, 1)), Color(0.07, 0.06, 0.08, 0.8))
+		c.draw_string(font, lp, name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.92))
 	var s := D.stats(data)
 	c.draw_string(font, Vector2(14, 22), "WORLD MAP - Calder", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("d4485e"))
 	c.draw_string(font, Vector2(14, 340), "%s  %s Lv %d   HP %d/%d  MP %d/%d   XP %d/%d   Gold %d   Potions %d  Ethers %d     (M / Esc: close)" % [data.name, data.cls, data.lv, data.hp, s.hp, data.mp, s.mp, data.xp, D.xp_need(data.lv), data.gold, data.potions, data.ethers], HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.85, 0.85, 0.85))
@@ -901,3 +945,31 @@ func _process(_d: float) -> void:
 	var tw := create_tween()
 	tw.tween_property(player, "position", Vector2(cell * T), 0.14)
 	tw.finished.connect(on_arrive)
+
+## Debug: list important cells not reachable from the hub.
+func check_reach() -> Array:
+	var seen := {hub: true}
+	var q := [hub]
+	while q.size() > 0:
+		var c: Vector2i = q.pop_back()
+		for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + dd
+			if seen.has(n) or n.x < 0 or n.y < 0 or n.x >= mw or n.y >= mh: continue
+			if g[n.y][n.x] in SOLID and not npcs.has(n): continue
+			if npcs.has(n): continue
+			seen[n] = true; q.append(n)
+	var bad := []
+	var need := []
+	for e in exits: need.append(["exit", e, false])
+	for c in chests: need.append(["chest", c, true])
+	for c in camps: need.append(["camp", c, true])
+	for c in npcs: need.append(["npc", c, true])
+	for b in buildings: need.append(["door", door_of(b), false])
+	for n in need:
+		var ok := false
+		if n[2]:
+			for dd in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				if seen.has(n[1] + dd): ok = true
+		else: ok = seen.has(n[1])
+		if not ok: bad.append("%s@%s" % [n[0], n[1]])
+	return bad

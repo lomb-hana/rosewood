@@ -39,7 +39,6 @@ func _ready() -> void:
 		if AudioServer.get_bus_index(bus) == -1:
 			AudioServer.add_bus(); AudioServer.set_bus_name(AudioServer.bus_count - 1, bus)
 	apply_settings()
-	VillageScript.allowed = ["rosewood", "hearth_fields", "thornwild_edge"]
 	show_title()
 	if shot != "": run_shot()
 	elif OS.has_feature("web"):
@@ -333,6 +332,7 @@ func run_shot() -> void:
 		village.player.position = Vector2(village.mw * 8, village.mh * 8)
 		await get_tree().create_timer(0.4).timeout
 		await snap(shot + "-map-" + m + ".png")
+		print("REACH ", m, " ", village.check_reach(), " bld=", village.buildings.size(), "/", D.WORLD[m].get("buildings", []).size())
 		village.cam.zoom = Vector2(2, 2); village.cam.position_smoothing_enabled = true
 	# walk from Rosewood east edge into the next map for real
 	village.load_map("rosewood", {"cell": Vector2i(57, 19)}); village.player.facing = Vector2i(1, 0)
@@ -366,6 +366,7 @@ func run_shot() -> void:
 		await get_tree().create_timer(0.2).timeout
 	await get_tree().create_timer(0.5).timeout
 	print("AFTER BATTLE lv=", village.data.lv, " xp=", village.data.xp, " gold=", village.data.gold, " hp=", village.data.hp)
+	village.load_map("vel_maren", {})
 	village.wmap.visible = true; village.wmap.queue_redraw()
 	await get_tree().create_timer(0.3).timeout
 	await snap(shot + "-world.png")
