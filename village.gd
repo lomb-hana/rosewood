@@ -3,6 +3,12 @@ extends Node2D
 signal quit_to_title
 signal save_requested(d)
 signal encounter(foes, biome)
+signal tactics(foes, biome)
+const PATROL_FOES := [["wolf", 2], ["wolf", 2], ["thornling", 2], ["crow", 1]]
+var patrol_cell := Vector2i(-1, -1)
+var patrol_route := []
+var patrol_i := 0
+var patrol_t := 0.0
 const T := 16
 enum {GRASS, PATH, TREE, WALL, ROOF, DOOR, HEDGE, WATER, FENCE, FLOWER, STONE, CROP, WELL, FLOOR, IWALL, EXIT, FURN, HIGH, CLIFF, STAIRS, BUSH, LAMP, BENCH, CRATE, BARREL, BRIDGE,
 	SAND, ROCK, CAVEWALL, PINE, REED, PEBBLE, RUIN, PILLAR, CHEST, CHEST_OPEN, CAMP,
@@ -135,6 +141,7 @@ func map_exists(id: String) -> bool:
 func load_map(id: String, spec: Dictionary) -> void:
 	map_id = id
 	for n in npcs.values(): n.node.queue_free()
+	patrol_cell = Vector2i(-1, -1)
 	npcs.clear(); signs.clear(); bcell.clear(); furn.clear(); exits.clear(); chests.clear(); camps.clear(); buildings.clear(); binfo.clear()
 	boss_cell = Vector2i(-1, -1); steps = 0
 	if "/" in id:
@@ -534,6 +541,11 @@ func load_authored(id: String) -> void:
 		var c := Vector2i(int(cp[0]), int(cp[1])); g[c.y][c.x] = CAMP; camps[c] = true
 	for s in j.get("notes", []):
 		signs[Vector2i(int(s[0]), int(s[1]))] = s[2]
+	if id == "thornwild_edge" and not "patrol:thornwild_edge" in data.flags:
+		patrol_route = [Vector2i(18, 24), Vector2i(19, 24), Vector2i(20, 24), Vector2i(21, 24), Vector2i(22, 24), Vector2i(21, 24), Vector2i(20, 24), Vector2i(19, 24)]
+		patrol_cell = patrol_route[0]; patrol_i = 0
+		add_npc(patrol_cell, "Withered Patrol", "8a8a90", "3a3a3a", "4a4a52", ["Gray wolves and a thornling, moving as one. They've seen you."], "tactics")
+		npcs[patrol_cell].node.modulate = Color(1.0, 0.65, 0.65)
 	if j.has("boss") and d.has("boss"):
 		var c := Vector2i(int(j.boss[0]), int(j.boss[1]))
 		if not ("boss:" + id) in data.flags:
@@ -983,6 +995,8 @@ func interact() -> void:
 					say(n.lines + ["Bought a Potion for 15 gold. (Potions: %d, Gold: %d) Talk again to buy more." % [data.potions, data.gold]])
 				else:
 					say(n.lines + ["Not enough gold. (Gold: %d)" % data.gold])
+			"tactics":
+				say(n.lines, func(): tactics.emit(PATROL_FOES, biome))
 			"boss":
 				var bid: String = D.WORLD[base_map()].boss[0]
 				var lv: int = D.WORLD[base_map()].lv[1] + 1
@@ -1059,7 +1073,34 @@ func on_arrive() -> void:
 func OPP_DIR(side: String) -> Vector2i:
 	return -INWARD[side]
 
+func patrol_defeated() -> void:
+	if not "patrol:thornwild_edge" in data.flags: data.flags.append("patrol:thornwild_edge")
+	if patrol_cell.x >= 0 and npcs.has(patrol_cell):
+		npcs[patrol_cell].node.queue_free(); npcs.erase(patrol_cell)
+	patrol_cell = Vector2i(-1, -1)
+
+func tick_patrol(dt: float) -> void:
+	if patrol_cell.x < 0 or not npcs.has(patrol_cell): return
+	if mdist(patrol_cell, cell) <= 1 and not moving:
+		var n = npcs[patrol_cell]; npcs.erase(patrol_cell); n.node.modulate = Color(1, 0.4, 0.4)
+		npcs[patrol_cell] = n
+		patrol_t = -999.0
+		tactics.emit(PATROL_FOES, biome); return
+	patrol_t += dt
+	if patrol_t < 0.55: return
+	patrol_t = 0.0
+	var nxt: Vector2i = patrol_route[(patrol_i + 1) % patrol_route.size()]
+	if nxt == cell: return
+	patrol_i = (patrol_i + 1) % patrol_route.size()
+	var n = npcs[patrol_cell]; npcs.erase(patrol_cell)
+	n.node.facing = nxt - patrol_cell; n.node.queue_redraw()
+	patrol_cell = nxt; npcs[patrol_cell] = n
+	create_tween().tween_property(n.node, "position", Vector2(nxt * T), 0.3)
+
+func mdist(a: Vector2i, b: Vector2i) -> int: return absi(a.x - b.x) + absi(a.y - b.y)
+
 func _process(_d: float) -> void:
+	if not dialog.visible and not wmap.visible: tick_patrol(_d)
 	if moving or dialog.visible or wmap.visible: return
 	var dir := Vector2i.ZERO
 	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W): dir = Vector2i(0, -1)
@@ -1069,6 +1110,8 @@ func _process(_d: float) -> void:
 	if dir == Vector2i.ZERO: return
 	if player.facing != dir:
 		player.facing = dir; player.queue_redraw()
+	if npcs.has(cell + dir) and npcs[cell + dir].action == "tactics":
+		patrol_t = -999.0; tactics.emit(PATROL_FOES, biome); return
 	if solid(cell + dir): return
 	cell += dir
 	moving = true

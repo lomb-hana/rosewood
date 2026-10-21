@@ -7,6 +7,8 @@ var slot := 1
 const CharScript := preload("res://character.gd")
 const VillageScript := preload("res://village.gd")
 const BattleScript := preload("res://battle.gd")
+const TacticsScript := preload("res://tactics.gd")
+var tactical := false
 const D := preload("res://data.gd")
 var battle: CanvasLayer
 const CLASSES := [
@@ -43,10 +45,10 @@ func _ready() -> void:
 	if shot != "": run_shot()
 	elif OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("window.location.search", true)
-		if q is String and "warp=" in q: web_warp(q.split("warp=")[1].split("&")[0], "battle" in q)
+		if q is String and "warp=" in q: web_warp(q.split("warp=")[1].split("&")[0], "battle" in q, "tactics" in q)
 
 ## Dev/test hook: ?warp=<map id>[&battle] starts a test character there (does not touch saves).
-func web_warp(m: String, fight: bool) -> void:
+func web_warp(m: String, fight: bool, tac := false) -> void:
 	await get_tree().create_timer(0.5).timeout
 	var d := {"name": "Tester", "cls": "Knight", "skin": SKINS[1], "hair": HAIRS[1], "outfit": OUTFITS[0], "map": m}
 	D.ensure(d)
@@ -56,6 +58,9 @@ func web_warp(m: String, fight: bool) -> void:
 	if fight:
 		await get_tree().create_timer(1.0).timeout
 		village.encounter.emit([["wolf", 2], ["thornling", 2]], "forest")
+	elif tac:
+		await get_tree().create_timer(1.0).timeout
+		village.tactics.emit(village.PATROL_FOES, village.biome)
 
 func apply_settings() -> void:
 	for bus in ["Music", "SFX"]:
@@ -276,12 +281,14 @@ func start_village(d: Dictionary) -> void:
 	D.ensure(d)
 	village = VillageScript.new(); village.setup(d)
 	village.encounter.connect(start_battle)
+	village.tactics.connect(func(f, b): start_battle(f, b, true))
 	village.quit_to_title.connect(show_menu.call_deferred)
 	village.save_requested.connect(func(dd): write_slot(slot, dd))
 	add_child(village)
 
-func start_battle(foes: Array, biome: String) -> void:
+func start_battle(foes: Array, biome: String, tac := false) -> void:
 	if battle: return
+	tactical = tac
 	village.process_mode = Node.PROCESS_MODE_DISABLED
 	# transition: three white flashes, then a black wipe
 	var fx := CanvasLayer.new(); fx.layer = 10; add_child(fx)
@@ -292,7 +299,8 @@ func start_battle(foes: Array, biome: String) -> void:
 	tw.tween_callback(func(): r.color = Color(0, 0, 0, 1); r.scale = Vector2(0, 1))
 	tw.tween_property(r, "scale:x", 1.0, 0.25)
 	await tw.finished
-	battle = BattleScript.new(); battle.setup(village.data, foes, biome)
+	battle = TacticsScript.new() if tac else BattleScript.new()
+	battle.setup(village.data, foes, biome)
 	battle.done.connect(end_battle)
 	add_child(battle)
 	var tw2 := create_tween(); tw2.tween_property(r, "color:a", 0.0, 0.3); tw2.tween_callback(fx.queue_free)
@@ -305,6 +313,8 @@ func end_battle(result: String) -> void:
 		"win", "flee":
 			village.process_mode = Node.PROCESS_MODE_INHERIT
 			if result == "win" and was_boss: village.boss_defeated()
+			if result == "win" and tactical: village.patrol_defeated()
+			elif tactical: village.patrol_t = -1.5
 		"lose_load":
 			if read_slot(slot) != null: load_game(slot)
 			else: show_title()
@@ -316,6 +326,7 @@ func snap(path: String) -> void:
 	get_viewport().get_texture().get_image().save_png(path)
 
 func run_shot() -> void:
+	if OS.get_environment("TACTICS_TEST") != "": await tactics_test(); return
 	await get_tree().create_timer(0.5).timeout
 	await snap(shot + "-title.png")
 	sel.hair = 2; sel.outfit = 2; sel.cls = 3
@@ -375,4 +386,58 @@ func run_shot() -> void:
 	load_game(slot)
 	await get_tree().create_timer(0.5).timeout
 	print("LOADED map=", village.map_id, " cell=", village.cell, " lv=", village.data.lv)
+	get_tree().quit()
+
+## Headless/desktop test: drives the tactical prototype through its own command signals until it ends.
+func tactics_test() -> void:
+	var d := {"name": "Tester", "cls": OS.get_environment("TACTICS_TEST"), "skin": SKINS[1], "hair": HAIRS[1], "outfit": OUTFITS[0], "map": "thornwild_edge"}
+	D.ensure(d); slot = 99; start_village(d)
+	village.save_requested.disconnect(village.save_requested.get_connections()[0].callable)
+	await get_tree().create_timer(0.5).timeout
+	village.tactics.emit(village.PATROL_FOES, village.biome)
+	while battle == null: await get_tree().process_frame
+	Engine.time_scale = float(OS.get_environment("TSCALE")) if OS.get_environment("TSCALE") != "" else 1.0
+	var t0 := Time.get_ticks_msec(); var shot_move := false; var shot_main := false
+	var last_turn = null; var did := {}
+	while battle and Time.get_ticks_msec() - t0 < 240000:
+		await get_tree().create_timer(0.05).timeout
+		if battle == null: break
+		if battle.root.has_node("ResultPanel"):
+			print("RESULT ", battle.msg.text, " lv=", village.data.lv, " xp=", village.data.xp)
+			await snap(shot + "-end.png")
+			var won: bool = "Victory" in battle.msg.text
+			battle.done.emit("win" if won else "lose_title")
+			if won: await get_tree().create_timer(0.5).timeout; print("PATROL GONE ", village.patrol_cell, " flags=", village.data.flags)
+			get_tree().quit(); return
+		var u = battle.active
+		if Engine.get_process_frames() % 120 == 0: print("STATE ", battle.mode, " | ", battle.msg.text)
+		if u == null or u.side != "p": continue
+		if last_turn == null or last_turn.uid != u.uid or did.get("t", -1.0) != u.t: did = {"t": u.t}; last_turn = u
+		if battle.mode == "menu":
+			if not shot_main: shot_main = true; await snap(shot + "-tactics.png")
+			if not did.has("move"): did.move = true; battle.picked.emit(["move"])
+			elif not did.has("atk"): did.atk = true; battle.picked.emit(["skills" if u.mp >= 8 and u.cls != "Cleric" and randf() < 0.3 else "attack"])
+			else: battle.picked.emit(["end"])
+		elif battle.mode == "move":
+			var best = u.cell; var bd := 999
+			for c in battle.reach:
+				var e2 := 999
+				for e in battle.enemies:
+					if e.hp > 0: e2 = mini(e2, battle.mdist(c, e.cell) if u.range == 1 else absi(battle.mdist(c, e.cell) - u.range))
+				if e2 < bd: bd = e2; best = c
+			battle.cursor = best; battle.on_cursor()
+			if not shot_move: shot_move = true; await get_tree().create_timer(0.1).timeout; await snap(shot + "-tactics-move.png")
+			battle.picked.emit(["back"] if best == u.cell else ["cell", best])
+		elif battle.mode == "target":
+			var pick = null
+			for c in battle.valid:
+				var o = battle.unit_at(c)
+				if o != null and o.side == "e": pick = c
+			if pick == null: battle.picked.emit(["back"])
+			else: battle.picked.emit(["cell", pick])
+		elif battle.cmd_box.get_child_count() > 0 and battle.cmd_box.get_child(battle.cmd_box.get_child_count() - 1).text == "Back":
+			var b0 = battle.cmd_box.get_child(0)
+			if not b0.disabled: b0.pressed.emit()
+			else: battle.picked.emit(["back"])
+	print("TEST DONE flags=", village.data.flags)
 	get_tree().quit()
