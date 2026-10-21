@@ -533,8 +533,8 @@ func do_move(u: Dictionary) -> bool:
 	reach = bfs(u, u.move)
 	hl = {}
 	for c in reach: if c != u.cell: hl[c] = Color(0.3, 0.5, 1.0, 0.4)
-	mode = "move"; cursor = u.cell; on_cursor()
 	msg.text = "Choose a tile to move to. (Esc: back)"
+	mode = "move"; cursor = u.cell; on_cursor()
 	while true:
 		var a = await picked
 		if a[0] == "back": mode = "busy"; return false
@@ -592,8 +592,8 @@ func do_target(u: Dictionary, sk) -> bool:
 	for c in valid:
 		var t = unit_at(c)
 		if t != null and t.side != u.side: cursor = c; break
-	on_cursor()
 	msg.text = "%s: choose a target. (Esc: back)" % ("Attack" if sk == null else sk[0])
+	on_cursor()
 	while true:
 		var a = await picked
 		if a[0] == "back": mode = "busy"; hl = {}; aoe = []; return false

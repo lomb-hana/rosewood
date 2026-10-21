@@ -88,7 +88,7 @@ async def main():
                 await pg.wait_for_timeout(900)
             elif s["mode"] == "target":
                 cells = [tuple(c) for c in s["cells"]]
-                if act["cls"] == "Cleric" and "Mend" in s["msg"]:
+                if act["cls"] == "Cleric" and s["msg"].startswith("Mend"):
                     tg = min([u for u in allies if (u["x"], u["y"]) in cells], key=lambda u: u["hp"] / u["maxhp"], default=None)
                 else:
                     tg = min([f for f in foes if (f["x"], f["y"]) in cells], key=lambda f: f["hp"], default=None)
