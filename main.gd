@@ -148,7 +148,7 @@ func show_menu() -> void:
 	col.add_child(btn("Load", show_load))
 	col.add_child(btn("Options", show_options))
 	if not OS.has_feature("web"): col.add_child(btn("Quit", func(): get_tree().quit()))
-	var f := Label.new(); f.text = "↑↓ + Enter or mouse · Esc: back"
+	var f := Label.new(); f.text = "Arrows + Enter or mouse - Esc: back"
 	f.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; f.add_theme_color_override("font_color", Color("6a5a5e"))
 	v.add_child(f)
 	ng.grab_focus.call_deferred()
